@@ -45,6 +45,9 @@ bool SequenceReverseOp::AttachImpl(const cpp::OpDesc &opdesc,
       scope->FindVar(opdesc.Output("Y").front())->GetMutable<lite::Tensor>();
   CHECK(param_.X);
   CHECK(param_.Out);
+
+  LOG(WARNING) << "cwndmiao Out=" << opdesc.Output("Y").front()
+    << ", ptr=" << param_.Out;
   return true;
 }
 

@@ -1532,6 +1532,19 @@ struct XPUResNetCbamParam : ParamBase {
   float pool_p{1.0f};
 };
 
+struct XPUSearchAttentionParam : ParamBase {
+  lite::Tensor* X{};
+  lite::Tensor* W{};
+  lite::Tensor* b{};
+  lite::Tensor* Out{};
+
+  float W_max{0.0f};
+  int pad_id{0};
+  float alpha0{1.0f};
+  float alpha1{1.0f};
+  float mask{1.0f};
+};
+
 }  // namespace operators
 }  // namespace lite
 }  // namespace paddle
