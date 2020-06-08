@@ -70,6 +70,18 @@ bool SearchFcOpLite::AttachImpl(const cpp::OpDesc &op_desc,
   param_.Out = scope->FindVar(Out)->GetMutable<lite::Tensor>();
   param_.out_size = op_desc.GetAttr<int>("out_size");
 
+#ifdef LITE_WITH_XPU
+  if (op_desc.HasAttr("fuse_relu")) {
+    param_.fuse_relu = op_desc.GetAttr<bool>("fuse_relu");
+  }
+  if (op_desc.HasAttr("float_to_fix")) {
+    param_.float_to_fix = op_desc.GetAttr<bool>("float_to_fix");
+  }
+  if (op_desc.HasAttr("max_w")) {
+    param_.max_w = op_desc.GetAttr<float>("max_w");
+  }
+#endif
+
   return true;
 }
 

@@ -45,8 +45,10 @@ class XPUMMDNNSearchAttentionFuser : public FuseBase {
       ->AsIntermediate();
 
     auto* search_seq_fc_w = VarNode("search_seq_fc_w")
+      ->assert_is_op_input("search_seq_fc", "W")
       ->AsInput();
     auto* search_seq_fc_b = VarNode("search_seq_fc_b")
+      ->assert_is_op_input("search_seq_fc", "b")
       ->AsInput();
     auto* search_seq_fc = OpNode("search_seq_fc", "search_seq_fc")
       ->AsIntermediate();
@@ -187,6 +189,92 @@ class XPUMMDNNSearchAttentionFuser : public FuseBase {
   }
 };
 
+class Float2Fix {
+ public:
+  void operator()(SSAGraph* graph) {
+    for (auto* node : graph->StmtTopologicalOrder()) {
+      CHECK(node->IsStmt());
+      auto* op_info = node->stmt()->op_info();
+      std::string op_type = op_info->Type();
+      static const std::vector<std::string> target_ops{"match_matrix_tensor", "var_conv_2d", "search_fc"};
+
+      if (std::find(target_ops.begin(),
+            target_ops.end(), op_type) != target_ops.end()) {
+        std::string weight_name = op_info->Input("W").front();
+        auto* scope = node->stmt()->op()->scope();
+        auto* weight_t = scope->FindMutableTensor(weight_name);
+        auto weight_dims = weight_t->dims();
+        auto weight_len = weight_t->numel();
+        float* weight_on_host = weight_t->mutable_data<float>();
+        float max_f =
+          paddle::lite::xpu::math::FindMaxAbs(weight_on_host, weight_len);
+        std::unique_ptr<int16_t[]> weight_int16(new int16_t[weight_len]);
+        paddle::lite::xpu::math::ConvertFP32ToInt16(
+            weight_on_host, weight_int16.get(), max_f, weight_len);
+        memcpy(weight_on_host,
+               weight_int16.get(),
+               weight_len * sizeof(int16_t));
+
+        auto update_op_info = *op_info;
+        update_op_info.SetAttr<bool>("float_to_fix", true);
+        update_op_info.SetAttr<float>("max_w", max_f);
+        node->stmt()->ResetOp(update_op_info, graph->valid_places());
+        VLOG(3) << "Float2Fix, op_type=" << op_type
+          << ", weight_name=" << weight_name;
+      } else if (op_type == "search_grnn") {
+        auto* scope = node->stmt()->op()->scope();
+
+        std::string wi_name = op_info->Input("Wi").front();
+        auto* wi_t = scope->FindMutableTensor(wi_name);
+        auto wi_dims = wi_t->dims();
+        auto wi_len = wi_t->numel();
+        auto wi_stride_len = wi_len / 3;
+        float* wi_on_host = wi_t->mutable_data<float>();
+        std::unique_ptr<int16_t[]> wi_int16(new int16_t[wi_len]);
+        std::vector<float> wi_max(3);
+        for (int i = 0; i < 3; ++i) {
+          float max_f =
+            paddle::lite::xpu::math::FindMaxAbs(wi_on_host + i * wi_stride_len, wi_stride_len);
+          paddle::lite::xpu::math::ConvertFP32ToInt16(
+              wi_on_host + i * wi_stride_len, wi_int16.get() + i * wi_stride_len, max_f, wi_stride_len);
+          wi_max[i] = max_f;
+        }
+        memcpy(wi_on_host,
+               wi_int16.get(),
+               wi_len * sizeof(int16_t));
+
+        std::string wh_name = op_info->Input("Wh").front();
+        auto* wh_t = scope->FindMutableTensor(wh_name);
+        auto wh_dims = wh_t->dims();
+        auto wh_len = wh_t->numel();
+        auto wh_stride_len = wh_len / 3;
+        float* wh_on_host = wh_t->mutable_data<float>();
+        std::unique_ptr<int16_t[]> wh_int16(new int16_t[wh_len]);
+        std::vector<float> wh_max(3);
+        for (int i = 0; i < 3; ++i) {
+          float max_f =
+            paddle::lite::xpu::math::FindMaxAbs(wh_on_host + i * wh_stride_len, wh_stride_len);
+          paddle::lite::xpu::math::ConvertFP32ToInt16(
+              wh_on_host + i * wh_stride_len, wh_int16.get() + i * wh_stride_len, max_f, wh_stride_len);
+          wh_max[i] = max_f;
+        }
+        memcpy(wh_on_host,
+               wh_int16.get(),
+               wh_len * sizeof(int16_t));
+
+        auto update_op_info = *op_info;
+        update_op_info.SetAttr<bool>("float_to_fix", true);
+        update_op_info.SetAttr<std::vector<float>>("wi_max", wi_max);
+        update_op_info.SetAttr<std::vector<float>>("wh_max", wh_max);
+        node->stmt()->ResetOp(update_op_info, graph->valid_places());
+        VLOG(3) << "Float2Fix, op_type=" << op_type
+          << ", wi_name=" << wi_name
+          << ", wh_name=" << wh_name;
+      }
+    }
+  }
+};
+
 }  // namespace fusion
 
 class XPUMMDNNFusePass : public ProgramPass {
@@ -195,6 +283,8 @@ class XPUMMDNNFusePass : public ProgramPass {
     if (GetBoolFromEnv("XPU_ENABLE_XTCL")) return;
     fusion::XPUMMDNNSearchAttentionFuser block0_fuser;
     block0_fuser(graph.get());
+    fusion::Float2Fix float_2_fix;
+    float_2_fix(graph.get());
     //fusion::XPUResNetCbamBlock1Fuser block1_fuser;
     //block1_fuser(graph.get());
     //fusion::XPUResNetCbamBlock2Fuser block2_fuser;
@@ -214,4 +304,4 @@ class XPUMMDNNFusePass : public ProgramPass {
 REGISTER_MIR_PASS(__xpu__mmdnn_fuse_pass,
                   paddle::lite::mir::XPUMMDNNFusePass)
     .BindTargets({TARGET(kXPU)})
-    .BindKernel("conv2d");
+    .BindKernel("__xpu__search_attention");

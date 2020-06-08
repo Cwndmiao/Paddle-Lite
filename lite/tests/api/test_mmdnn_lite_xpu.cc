@@ -69,6 +69,7 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
   lite_api::CxxConfig config;
   config.set_model_dir(FLAGS_model_dir);
   config.set_valid_places({lite_api::Place{TARGET(kXPU), PRECISION(kFloat)},
+                           lite_api::Place{TARGET(kXPU), PRECISION(kInt64)},
                            lite_api::Place{TARGET(kX86), PRECISION(kFloat)},
                            lite_api::Place{TARGET(kX86), PRECISION(kInt64)},
                            lite_api::Place{TARGET(kHost), PRECISION(kFloat)}});

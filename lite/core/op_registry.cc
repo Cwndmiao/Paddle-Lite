@@ -226,6 +226,7 @@ KernelRegistry::KernelRegistry()
   INIT_FOR(kAPU, kInt8, kNCHW);
   INIT_FOR(kXPU, kFloat, kNCHW);
   INIT_FOR(kXPU, kInt8, kNCHW);
+  INIT_FOR(kXPU, kInt64, kNCHW);
   INIT_FOR(kXPU, kAny, kNCHW);
   INIT_FOR(kXPU, kAny, kAny);
 

@@ -1119,6 +1119,11 @@ struct VarConv2DParam : ParamBase {
   int kernel_w;
 
   bool fuse_relu{false};
+
+#ifdef LITE_WITH_XPU
+  bool float_to_fix{false};
+  float max_w{0.0f};
+#endif
 };
 
 /// ----------------------- shape operators ----------------------
@@ -1350,6 +1355,12 @@ struct SearchFcParam : ParamBase {
   const lite::Tensor* b{};
   lite::Tensor* Out{};
   int out_size{};
+
+#ifdef LITE_WITH_XPU
+  bool fuse_relu{false};
+  bool float_to_fix{false};
+  float max_w{0.0f};
+#endif
 };
 /// --------------------- match_matrix_tensor operators --------------------
 struct MatchMatrixTensorParam : ParamBase {
@@ -1360,6 +1371,12 @@ struct MatchMatrixTensorParam : ParamBase {
   lite::Tensor* tmp{};
 
   int dim_t;
+
+#ifdef LITE_WITH_XPU
+  bool fuse_relu{false};
+  bool float_to_fix{false};
+  float max_w{0.0f};
+#endif
 };
 
 /// --------------------- search_seq_depadding operators --------------------
@@ -1381,6 +1398,12 @@ struct SearchGrnnParam : ParamBase {
   lite::Tensor* tmp_buffer{};
   lite::Tensor* idx_sorted_by_width{};
   lite::Tensor* layout_input{};
+
+#ifdef LITE_WITH_XPU
+  std::vector<float> wi_max;
+  std::vector<float> wh_max;
+  bool float_to_fix{false};
+#endif
 };
 
 struct SplitLodTensorParam : ParamBase {

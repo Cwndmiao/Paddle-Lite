@@ -14,6 +14,7 @@
 
 #include "lite/kernels/xpu/__xpu__search_attention_compute.h"
 #include "lite/backends/xpu/xpu_header_sitter.h"
+#include "lite/backends/xpu/debug.h"
 #include "lite/core/op_registry.h"
 
 namespace paddle {
@@ -57,14 +58,27 @@ void XPUSearchAttentionCompute::Run() {
   float alpha1 = param.alpha1;
   float mask = param.mask;
 
+  //paddle::lite::xpu::dump_xpu_mem(X->data<float>(),
+      //X->numel(),
+      //"attention bottom", 128, 16);
+
   const int16_t* w_data = W->data<int16_t>();
   const float* b_data = b->data<float>();
 
   int batch = X->lod()[0].size() - 1;
-  //int dim0 = X->dims()[0];
+  int dim0 = X->dims()[0];
   int dim1 = X->dims()[1];
   const auto offset = X->lod()[0];
   int max_seq = 0;
+
+    //auto* top = ctx.Output<LoDTensor>("Out");
+    auto* top = param.Out;
+    LoD top_lod;
+    top_lod.push_back(X->lod()[0]);
+    top->set_lod(top_lod);
+    top->Resize({dim0, dim1});
+    auto* top_data = top->mutable_data<float>(TARGET(kXPU));
+
   std::unique_ptr<int[]> offset_cpu(new int[offset.size()]);
   std::unique_ptr<int[]> pad_begin_cpu(new int[batch]);
   float maxs_cpu[8] = {0.0f, 0.0f, 0.0f, 0.0f, W_max, 0.0f, 0.0f, 0.0f};
@@ -119,10 +133,24 @@ void XPUSearchAttentionCompute::Run() {
             const_cast<float*>(bottom_data), group_padding_output, offset_xpu, max_seq, batch, dim1, 0); // is_depad = 0
     //PADDLE_ENFORCE(r == xpu::Error_t::SUCCESS, "XPU kernel error!");
     (void)r;
+    //{
+      ////cwndmiao debug
+      //size_t expected_len = batch * max_seq * dim1;
+      //paddle::lite::xpu::dump_xpu_mem(group_padding_output,
+          //expected_len,
+          //"group padding", 128, 16);
+    //}
 
     // do-findmax
     r = xdnn::findmax<float>(ctx.GetRawContext(), group_padding_output, batch * max_seq * dim1, maxs_xpu);
     //PADDLE_ENFORCE(r == xpu::Error_t::SUCCESS, "XPU kernel error!");
+    //{
+      ////cwndmiao debug
+      //size_t expected_len = 8;
+      //paddle::lite::xpu::dump_xpu_mem(maxs_xpu,
+          //expected_len,
+          //"findmax");
+    //}
 
     r = xdnn::gemm_int16_maxptr<float, int16_t, float>(ctx.GetRawContext(),
             false, true,                        //trans_a, trans_b
@@ -133,6 +161,19 @@ void XPUSearchAttentionCompute::Run() {
             xdnn::Activation_t::LINEAR,
             maxs_xpu, maxs_xpu + 4, nullptr); //max_a, max_b, max_c
     //PADDLE_ENFORCE(r == xpu::Error_t::SUCCESS, "XPU kernel error!");
+    //{
+      //size_t expected_len = dim1 * dim1;
+      //paddle::lite::xpu::dump_xpu_mem(w_data,
+          //expected_len,
+          //"w_data", 32, 32);
+    //}
+    //{
+      ////cwndmiao debug
+      //size_t expected_len = batch * max_seq * dim1;
+      //paddle::lite::xpu::dump_xpu_mem(seq_fc_output,
+          //expected_len,
+          //"search_seq_fc", 128, 32);
+    //}
 
     r = xdnn::search_aligned_mat_mul(ctx.GetRawContext(),
             0, 1, batch, max_seq, max_seq, dim1, alpha0,
@@ -155,16 +196,14 @@ void XPUSearchAttentionCompute::Run() {
             batchgemm1_output, dim1);
     //PADDLE_ENFORCE(r == xpu::Error_t::SUCCESS, "XPU kernel error!");
 
-    //auto* top = ctx.Output<LoDTensor>("Out");
-    //framework::LoD top_lod;
-    //top_lod.push_back(bottom0->lod()[0]);
-    //top->set_lod(top_lod);
-    //top->Resize(framework::make_ddim({dim0, dim1}));
-    auto* top = param.Out;
-    auto* top_data = top->mutable_data<float>(TARGET(kXPU));
     r = xdnn::search_sequence_pad_depad(ctx.GetRawContext(),
             top_data, batchgemm1_output, offset_xpu, max_seq, batch, dim1, 1); // is_depad = 1
     //PADDLE_ENFORCE(r == xpu::Error_t::SUCCESS, "XPU kernel error!");
+    //
+  //paddle::lite::xpu::dump_xpu_mem(top->data<float>(),
+      //top->numel(),
+      //"attention top", 128, 16);
+
 }
 
 }  // namespace xpu
