@@ -23,17 +23,24 @@ namespace kernels {
 namespace xpu {
 
 void SearchGrnnCompute::PrepareForRun() {
-  void* offset_xpu_ptr = nullptr;
-  xpu_malloc(&offset_xpu_ptr, 64 * sizeof(int));
-  offset_xpu_guard_.reset(offset_xpu_ptr);
+  //void* offset_xpu_ptr = nullptr;
+  //xpu_malloc(&offset_xpu_ptr, 64 * sizeof(int));
+  //offset_xpu_guard_.reset(offset_xpu_ptr);
+  offset_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
 
-  void* new_offset_xpu_ptr = nullptr;
-  xpu_malloc(&new_offset_xpu_ptr, 64 * sizeof(int));
-  new_offset_xpu_guard_.reset(new_offset_xpu_ptr);
+  //void* new_offset_xpu_ptr = nullptr;
+  //xpu_malloc(&new_offset_xpu_ptr, 64 * sizeof(int));
+  //new_offset_xpu_guard_.reset(new_offset_xpu_ptr);
+  new_offset_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(256 * sizeof(int));
 
-  void* maxs_xpu_ptr = nullptr;
-  xpu_malloc(&maxs_xpu_ptr, 16 * sizeof(float));
-  maxs_xpu_guard_.reset(maxs_xpu_ptr);
+  //void* maxs_xpu_ptr = nullptr;
+  //xpu_malloc(&maxs_xpu_ptr, 16 * sizeof(float));
+  //maxs_xpu_guard_.reset(maxs_xpu_ptr);
+  maxs_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(16 * sizeof(float));
+
+  idx_sorted_by_width_data_cpu.reset(new int[64]);
+  offset_cpu.reset(new int[64]);
+  new_offset_cpu.reset(new int[256]);
 }
 
   void SearchGrnnCompute::xpu_prepare_layout(const operators::SearchGrnnParam& param,
@@ -65,7 +72,7 @@ void SearchGrnnCompute::PrepareForRun() {
     int* width_data = _width.mutable_data<int>();
 
     //int* idx_sorted_by_width_data_cpu = (int*)malloc(_idx_sorted_by_width->numel() * sizeof(int));
-    std::unique_ptr<int[]> idx_sorted_by_width_data_cpu(new int[batch]);
+    //std::unique_ptr<int[]> idx_sorted_by_width_data_cpu(new int[batch]);
 
     // sort sequence by width (descending) and find the largest width in the batch
     for (int i = 0; i < batch; i++) {
@@ -190,12 +197,14 @@ void SearchGrnnCompute::Run() {
     //PADDLE_ENFORCE(offset_xpu != nullptr, "Fail to alloc L3");
     //PADDLE_ENFORCE(new_offset_xpu != nullptr, "Fail to alloc L3");
     //PADDLE_ENFORCE(maxs_xpu != nullptr, "Fail to alloc L3");
-    int* offset_xpu = (int*)offset_xpu_guard_.get();
-    int* new_offset_xpu = (int*)new_offset_xpu_guard_.get();
-    float* maxs_xpu = (float*)maxs_xpu_guard_.get();
+    int* offset_xpu = (int*)offset_xpu_guard_->addr_;
+    int* new_offset_xpu = (int*)new_offset_xpu_guard_->addr_;
+    float* maxs_xpu = (float*)maxs_xpu_guard_->addr_;
+    CHECK(offset.size() <= 64);
+    CHECK(new_offset.size() <= 256);
 
-    std::unique_ptr<int[]> offset_cpu(new int[offset.size()]);
-    std::unique_ptr<int[]> new_offset_cpu(new int[new_offset.size()]);
+    //std::unique_ptr<int[]> offset_cpu(new int[offset.size()]);
+    //std::unique_ptr<int[]> new_offset_cpu(new int[new_offset.size()]);
     //int* offset_cpu = (int*)malloc(offset.size() * sizeof(int));
     //int* new_offset_cpu = (int*)malloc(new_offset.size() * sizeof(int));
     for (size_t i = 0; i < offset.size(); ++i) {

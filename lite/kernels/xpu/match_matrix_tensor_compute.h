@@ -14,9 +14,8 @@
 
 #pragma once
 
-#include <memory>
 #include "lite/core/kernel.h"
-#include "lite/kernels/xpu/utils.h"  // XPUFreeDeleter
+#include "lite/backends/xpu/target_wrapper.h"
 
 namespace paddle {
 namespace lite {
@@ -32,9 +31,12 @@ class MatchMatrixTensorCompute : public KernelLite<TARGET(kXPU), PRECISION(kFloa
   virtual void Run();
 
  private:
-  std::unique_ptr<void, XPUFreeDeleter> wx_max_xpu_guard_;
-  std::unique_ptr<void, XPUFreeDeleter> offset_l_xpu_guard_;
-  std::unique_ptr<void, XPUFreeDeleter> offset_r_xpu_guard_;
+  XPUScratchPadGuard wx_max_xpu_guard_;
+  XPUScratchPadGuard offset_l_xpu_guard_;
+  XPUScratchPadGuard offset_r_xpu_guard_;
+
+  std::unique_ptr<int[]> offset_l_cpu;
+  std::unique_ptr<int[]> offset_r_cpu;
 };
 
 }  // namespace xpu

@@ -22,11 +22,8 @@ namespace kernels {
 namespace xpu {
 
 void XPUSequencePoolCompute::PrepareForRun() {
-  void* lod_xpu_ptr = nullptr;
-  xpu_malloc(&lod_xpu_ptr, 64 * sizeof(int));
-  //auto& ctx = this->ctx_->template As<XPUContext>();
-  //lod_xpu_ptr = xdnn::alloc_workspace(ctx.GetRawContext(), 64 * sizeof(int));
-  lod_xpu_guard_.reset(lod_xpu_ptr);
+  lod_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
+  lod_cpu.reset(new int[64]);
 }
 
 void XPUSequencePoolCompute::Run() {
@@ -54,17 +51,18 @@ void XPUSequencePoolCompute::Run() {
   int dim = out->numel() / num_seq;
 
   auto in_lod = in->lod()[0];
-  std::unique_ptr<int[]> lod_cpu(new int[in_lod.size()]);
+  //std::unique_ptr<int[]> lod_cpu(new int[in_lod.size()]);
   for (size_t i = 0; i < in_lod.size(); ++i) {
     lod_cpu[i] = in_lod[i];
   }
-  xpu_memcpy(lod_xpu_guard_.get(),
+  int* lod_xpu = (int*)lod_xpu_guard_->addr_;
+  xpu_memcpy(lod_xpu,
       lod_cpu.get(),
       in_lod.size() * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
 
   xdnn::sequence_pooling_forward(ctx.GetRawContext(),
-      pool_type, num_seq, (const int *)lod_xpu_guard_.get(), dim, in->data<float>(), nullptr /* index */,
+      pool_type, num_seq, (const int *)lod_xpu, dim, in->data<float>(), nullptr /* index */,
       out->mutable_data<float>(TARGET(kXPU)));
 }
 

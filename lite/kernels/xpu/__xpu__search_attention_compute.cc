@@ -14,7 +14,6 @@
 
 #include "lite/kernels/xpu/__xpu__search_attention_compute.h"
 #include "lite/backends/xpu/xpu_header_sitter.h"
-#include "lite/backends/xpu/debug.h"
 #include "lite/core/op_registry.h"
 
 namespace paddle {
@@ -23,27 +22,16 @@ namespace kernels {
 namespace xpu {
 
 void XPUSearchAttentionCompute::PrepareForRun() {
-  //auto& param = this->Param<param_t>();
+  offset_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
+  pad_begin_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
+  w_max_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(8 * sizeof(float));
+  buffer_at_l3_guard_ = TargetWrapperXPU::MallocScratchPad(
+      5 * L3_SLOT_SIZE * sizeof(float), false /* use_l3 */);
+  buffer_at_gm_guard_ = TargetWrapperXPU::MallocScratchPad(
+      5 * GM_SLOT_SIZE * sizeof(float), false /* use_l3 */);
 
-  void* offset_xpu_ptr = nullptr;
-  xpu_malloc(&offset_xpu_ptr, 64 * sizeof(int));
-  offset_xpu_guard_.reset(offset_xpu_ptr);
-
-  void* pad_begin_xpu_ptr = nullptr;
-  xpu_malloc(&pad_begin_xpu_ptr, 64 * sizeof(int));
-  pad_begin_xpu_guard_.reset(pad_begin_xpu_ptr);
-
-  void* w_max_xpu_ptr = nullptr;
-  xpu_malloc(&w_max_xpu_ptr, 8 * sizeof(float));
-  w_max_xpu_guard_.reset(w_max_xpu_ptr);
-
-  void* buffer_at_l3_ptr = nullptr;
-  xpu_malloc(&buffer_at_l3_ptr, 5 * l3_slot_size * sizeof(float));
-  buffer_at_l3_guard_.reset(buffer_at_l3_ptr);
-
-  void* buffer_at_gm_ptr = nullptr;
-  xpu_malloc(&buffer_at_gm_ptr, 5 * gm_slot_size * sizeof(float));
-  buffer_at_gm_guard_.reset(buffer_at_gm_ptr);
+  offset_cpu.reset(new int[64]);
+  pad_begin_cpu.reset(new int[64]);
 }
 
 void XPUSearchAttentionCompute::Run() {
@@ -79,8 +67,8 @@ void XPUSearchAttentionCompute::Run() {
     top->Resize({dim0, dim1});
     auto* top_data = top->mutable_data<float>(TARGET(kXPU));
 
-  std::unique_ptr<int[]> offset_cpu(new int[offset.size()]);
-  std::unique_ptr<int[]> pad_begin_cpu(new int[batch]);
+  //std::unique_ptr<int[]> offset_cpu(new int[offset.size()]);
+  //std::unique_ptr<int[]> pad_begin_cpu(new int[batch]);
   float maxs_cpu[8] = {0.0f, 0.0f, 0.0f, 0.0f, W_max, 0.0f, 0.0f, 0.0f};
   for (int i = 0; i < batch; ++i) {
       offset_cpu[i] = offset[i]; // type of offset is int64, not supported by xpu
@@ -91,18 +79,18 @@ void XPUSearchAttentionCompute::Run() {
   }
   offset_cpu[batch] = offset[batch];
 
-  xpu_memcpy(offset_xpu_guard_.get(), offset_cpu.get(),
+  xpu_memcpy(offset_xpu_guard_->addr_, offset_cpu.get(),
       offset.size() * sizeof(int), XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-  xpu_memcpy(pad_begin_xpu_guard_.get(), pad_begin_cpu.get(),
+  xpu_memcpy(pad_begin_xpu_guard_->addr_, pad_begin_cpu.get(),
       batch * sizeof(int), XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-  xpu_memcpy(w_max_xpu_guard_.get(), &maxs_cpu[0],
+  xpu_memcpy(w_max_xpu_guard_->addr_, maxs_cpu,
       8 * sizeof(float), XPUMemcpyKind::XPU_HOST_TO_DEVICE);
 
-    int* offset_xpu = (int*)offset_xpu_guard_.get();
-    int* pad_begin_xpu = (int*)pad_begin_xpu_guard_.get();
-    float* maxs_xpu = (float*)w_max_xpu_guard_.get();
-    float* buffer_at_l3 = (float*)buffer_at_l3_guard_.get();
-    float* buffer_at_gm = (float*)buffer_at_gm_guard_.get();
+    int* offset_xpu = (int*)offset_xpu_guard_->addr_;
+    int* pad_begin_xpu = (int*)pad_begin_xpu_guard_->addr_;
+    float* maxs_xpu = (float*)w_max_xpu_guard_->addr_;
+    float* buffer_at_l3 = (float*)buffer_at_l3_guard_->addr_;
+    float* buffer_at_gm = (float*)buffer_at_gm_guard_->addr_;
 
     // when use l3, max_seq <= 128:
     // group_padding:                   batch * max_seq * dim1;           at (slot0, slot1)
@@ -112,19 +100,19 @@ void XPUSearchAttentionCompute::Run() {
     // seq_softmax:                     batch * max_seq * max_seq;        at slot4
     // batchgemm1:                      batch * max_seq * dim1;           at (slot2, slot3)
     float* group_padding_output = buffer_at_l3;
-    float* seq_fc_output = buffer_at_l3 + 2 * l3_slot_size;
-    float* batchgemm0_output = buffer_at_l3 + 4 * l3_slot_size;
-    float* attention_output = buffer_at_l3 + 3 * l3_slot_size;
-    float* seq_softmax_output = buffer_at_l3 + 4 * l3_slot_size;
-    float* batchgemm1_output = buffer_at_l3 + 2 * l3_slot_size;
+    float* seq_fc_output = buffer_at_l3 + 2 * L3_SLOT_SIZE;
+    float* batchgemm0_output = buffer_at_l3 + 4 * L3_SLOT_SIZE;
+    float* attention_output = buffer_at_l3 + 3 * L3_SLOT_SIZE;
+    float* seq_softmax_output = buffer_at_l3 + 4 * L3_SLOT_SIZE;
+    float* batchgemm1_output = buffer_at_l3 + 2 * L3_SLOT_SIZE;
 
     if (max_seq > 128) {
         group_padding_output = buffer_at_gm;
-        seq_fc_output = buffer_at_gm + 1 * gm_slot_size;
-        batchgemm0_output = buffer_at_gm + 2 * gm_slot_size;
-        attention_output = buffer_at_gm + 1 * gm_slot_size;
-        seq_softmax_output = buffer_at_gm + 3 * gm_slot_size;
-        batchgemm1_output = buffer_at_gm + 4 * gm_slot_size;
+        seq_fc_output = buffer_at_gm + 1 * GM_SLOT_SIZE;
+        batchgemm0_output = buffer_at_gm + 2 * GM_SLOT_SIZE;
+        attention_output = buffer_at_gm + 1 * GM_SLOT_SIZE;
+        seq_softmax_output = buffer_at_gm + 3 * GM_SLOT_SIZE;
+        batchgemm1_output = buffer_at_gm + 4 * GM_SLOT_SIZE;
     }
 
 

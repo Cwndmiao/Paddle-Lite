@@ -22,13 +22,10 @@ namespace kernels {
 namespace xpu {
 
 void VarConv2DCompute::PrepareForRun() {
-  void* offset_x_xpu_ptr = nullptr;
-  xpu_malloc(&offset_x_xpu_ptr, 64 * sizeof(int));
-  offset_x_xpu_guard_.reset(offset_x_xpu_ptr);
-
-  void* offset_y_xpu_ptr = nullptr;
-  xpu_malloc(&offset_y_xpu_ptr, 64 * sizeof(int));
-  offset_y_xpu_guard_.reset(offset_y_xpu_ptr);
+  offset_x_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
+  offset_y_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
+  offset_x_cpu.reset(new int[64]);
+  offset_y_cpu.reset(new int[64]);
 }
 
 void VarConv2DCompute::Run() {
@@ -104,12 +101,12 @@ void VarConv2DCompute::Run() {
   //offset_y_xpu = (int*) xpu::alloc_workspace(dev_ctx.x_context(), (batch + 1) * sizeof(int));
   //PADDLE_ENFORCE(offset_x_xpu != nullptr, "Fail to alloc L3");
   //PADDLE_ENFORCE(offset_y_xpu != nullptr, "Fail to alloc L3");
-  offset_x_xpu = (int*)offset_x_xpu_guard_.get();
-  offset_y_xpu = (int*)offset_y_xpu_guard_.get();
+  offset_x_xpu = (int*)offset_x_xpu_guard_->addr_;
+  offset_y_xpu = (int*)offset_y_xpu_guard_->addr_;
   //int* offset_x_cpu = (int*)malloc((batch + 1) * sizeof(int));
   //int* offset_y_cpu = (int*)malloc((batch + 1) * sizeof(int));
-  std::unique_ptr<int[]> offset_x_cpu(new int[batch + 1]);
-  std::unique_ptr<int[]> offset_y_cpu(new int[batch + 1]);
+  //std::unique_ptr<int[]> offset_x_cpu(new int[batch + 1]);
+  //std::unique_ptr<int[]> offset_y_cpu(new int[batch + 1]);
   for (int i = 0; i < (batch + 1); ++i) {
       offset_x_cpu[i] = offset_x[i];
       offset_y_cpu[i] = offset_y[i];
@@ -124,11 +121,11 @@ void VarConv2DCompute::Run() {
           //(void*)offset_y_xpu,
           //platform::CPUPlace(), (void*)offset_y_cpu,
           //(batch + 1) * sizeof(int));
-  xpu_memcpy(offset_x_xpu_guard_.get(),
+  xpu_memcpy(offset_x_xpu,
       offset_x_cpu.get(),
       (batch + 1) * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-  xpu_memcpy(offset_y_xpu_guard_.get(),
+  xpu_memcpy(offset_y_xpu,
       offset_y_cpu.get(),
       (batch + 1) * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);

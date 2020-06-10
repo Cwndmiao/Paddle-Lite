@@ -22,17 +22,12 @@ namespace kernels {
 namespace xpu {
 
 void MatchMatrixTensorCompute::PrepareForRun() {
-  void* wx_max_xpu_ptr = nullptr;
-  xpu_malloc(&wx_max_xpu_ptr, 64 * sizeof(int));
-  wx_max_xpu_guard_.reset(wx_max_xpu_ptr);
+  wx_max_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
+  offset_l_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
+  offset_r_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
 
-  void* offset_l_xpu_ptr = nullptr;
-  xpu_malloc(&offset_l_xpu_ptr, 64 * sizeof(int));
-  offset_l_xpu_guard_.reset(offset_l_xpu_ptr);
-
-  void* offset_r_xpu_ptr = nullptr;
-  xpu_malloc(&offset_r_xpu_ptr, 64 * sizeof(int));
-  offset_r_xpu_guard_.reset(offset_r_xpu_ptr);
+  offset_l_cpu.reset(new int[64]);
+  offset_r_cpu.reset(new int[64]);
 }
 
 void MatchMatrixTensorCompute::Run() {
@@ -81,9 +76,9 @@ void MatchMatrixTensorCompute::Run() {
 
   //auto& dev_ctx = ctx.template device_context<DeviceContext>();
 
-  float* wx_max = (float*)wx_max_xpu_guard_.get();
-  int* offset_l_xpu = (int*)offset_l_xpu_guard_.get();
-  int* offset_r_xpu = (int*)offset_r_xpu_guard_.get();
+  float* wx_max = (float*)wx_max_xpu_guard_->addr_;
+  int* offset_l_xpu = (int*)offset_l_xpu_guard_->addr_;
+  int* offset_r_xpu = (int*)offset_r_xpu_guard_->addr_;
   //float* wx_max = (float*) xdnn::alloc_workspace(dev_ctx.x_context(), 4 * sizeof(float));
   //int* offset_l_xpu = (int*) xdnn::alloc_workspace(dev_ctx.x_context(), offset_l.size() * sizeof(int));
   //int* offset_r_xpu = (int*) xdnn::alloc_workspace(dev_ctx.x_context(), offset_r.size() * sizeof(int));
@@ -104,8 +99,8 @@ void MatchMatrixTensorCompute::Run() {
 
   int batch_size = x->lod()[0].size() - 1;
 
-  std::unique_ptr<int[]> offset_l_cpu(new int[offset_l.size()]);
-  std::unique_ptr<int[]> offset_r_cpu(new int[offset_r.size()]);
+  //std::unique_ptr<int[]> offset_l_cpu(new int[offset_l.size()]);
+  //std::unique_ptr<int[]> offset_r_cpu(new int[offset_r.size()]);
   int max_width = 0;
   for (int i = 0; i < offset_l.size(); ++i) {
       offset_l_cpu[i] = offset_l[i];
@@ -119,11 +114,11 @@ void MatchMatrixTensorCompute::Run() {
           max_width = offset_r_cpu[i] - offset_r_cpu[i - 1];
       }
   }
-  xpu_memcpy(offset_l_xpu_guard_.get(),
+  xpu_memcpy(offset_l_xpu,
       offset_l_cpu.get(),
       offset_l.size() * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-  xpu_memcpy(offset_r_xpu_guard_.get(),
+  xpu_memcpy(offset_r_xpu,
       offset_r_cpu.get(),
       offset_r.size() * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);

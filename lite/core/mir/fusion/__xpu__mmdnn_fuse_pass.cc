@@ -20,6 +20,7 @@
 #include "lite/core/mir/xpu_pattern_matcher_high_api.h"
 #include "lite/operators/subgraph_op.h"
 #include "lite/core/mir/graph_visualize_pass.h"
+#include "lite/backends/xpu/debug.h"
 
 namespace paddle {
 namespace lite {
@@ -175,6 +176,14 @@ class XPUMMDNNSearchAttentionFuser : public FuseBase {
     paddle::lite::xpu::math::ConvertFP32ToInt16(w_on_host, w_int16.get(), max_f, w_len);
     memcpy(w_on_host, w_int16.get(), w_len * sizeof(int16_t));
     op_desc.SetAttr<float>("W_max", max_f);
+
+    //{
+      //LOG(WARNING) << "w_name=" << w_name << ", w_dims=" << w_dims;
+      //size_t expected_len = w_len;
+      //paddle::lite::xpu::dump_cpu_mem((int16_t*)w_int16.get(),
+          //expected_len,
+          //"w_data", 32, 32);
+    //}
 
     auto new_op = LiteOpRegistry::Global().Create(op_desc.Type());
     new_op->Attach(op_desc, scope);

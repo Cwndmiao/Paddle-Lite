@@ -14,9 +14,8 @@
 
 #pragma once
 
-#include <memory>
 #include "lite/core/kernel.h"
-#include "lite/kernels/xpu/utils.h"  // XPUFreeDeleter
+#include "lite/backends/xpu/target_wrapper.h"
 
 namespace paddle {
 namespace lite {
@@ -32,7 +31,7 @@ class SearchFcCompute : public KernelLite<TARGET(kXPU), PRECISION(kFloat)> {
   void Run() override;
 
  private:
-  std::unique_ptr<void, XPUFreeDeleter> maxs_xpu_guard_;
+  XPUScratchPadGuard maxs_xpu_guard_;
 };
 
 }  // namespace xpu

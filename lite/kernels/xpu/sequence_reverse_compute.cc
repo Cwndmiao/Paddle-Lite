@@ -16,33 +16,19 @@
 #include "lite/backends/xpu/xpu_header_sitter.h"
 #include "lite/core/op_registry.h"
 
-//namespace {
-
-//template <paddle::lite_api::PrecisionType PType>
-//struct PrecisionType2BuiltinType;
-
-//template <>
-//struct PrecisionType2BuiltinType<PRECISION(kFloat)> { typedef float type; };
-
-//template <>
-//struct PrecisionType2BuiltinType<PRECISION(kInt64)> { typedef int64_t type; };
-
-//}
-
 namespace paddle {
 namespace lite {
 namespace kernels {
 namespace xpu {
 
 template <typename T, PrecisionType PType>
-void XPUSequenceReverseCompute<T, PType>::PrepareForRun() {
-  void* lod_xpu_ptr = nullptr;
-  xpu_malloc(&lod_xpu_ptr, 64 * sizeof(int));
-  lod_xpu_guard_.reset(lod_xpu_ptr);
+void SequenceReverseCompute<T, PType>::PrepareForRun() {
+  lod_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
+  lod_cpu.reset(new int[64]);
 }
 
 template <typename T, PrecisionType PType>
-void XPUSequenceReverseCompute<T, PType>::Run() {
+void SequenceReverseCompute<T, PType>::Run() {
   auto& param = this->template Param<param_t>();
   auto& ctx = this->ctx_->template As<XPUContext>();
 
@@ -70,14 +56,15 @@ void XPUSequenceReverseCompute<T, PType>::Run() {
 
   int batch_size = lod.size() - 1;
 
-  std::unique_ptr<int[]> lod_cpu(new int[lod.size()]);
+  //std::unique_ptr<int[]> lod_cpu(new int[lod.size()]);
   for (size_t i = 0; i < lod.size(); ++i) {
     lod_cpu[i] = lod[i];
   }
-  xpu_memcpy(lod_xpu_guard_.get(), lod_cpu.get(), lod.size() * sizeof(int), XPUMemcpyKind::XPU_HOST_TO_DEVICE);
+  int* lod_xpu = (int*)lod_xpu_guard_->addr_;
+  xpu_memcpy(lod_xpu, lod_cpu.get(), lod.size() * sizeof(int), XPUMemcpyKind::XPU_HOST_TO_DEVICE);
 
   xdnn::sequence_reverse(ctx.GetRawContext(),
-      batch_size, (const int*)lod_xpu_guard_.get(),
+      batch_size, (const int*)lod_xpu,
       ele_cnt_in_4_byte,
       (const float*)x_data, (float*)y_data);
 }
@@ -88,8 +75,8 @@ void XPUSequenceReverseCompute<T, PType>::Run() {
 }  // namespace paddle
 
 namespace xpu = paddle::lite::kernels::xpu;
-using SequenceReverseFp32 = xpu::XPUSequenceReverseCompute<float, PRECISION(kFloat)>;
-using SequenceReverseInt64 = xpu::XPUSequenceReverseCompute<int64_t, PRECISION(kInt64)>;
+using SequenceReverseFp32 = xpu::SequenceReverseCompute<float, PRECISION(kFloat)>;
+using SequenceReverseInt64 = xpu::SequenceReverseCompute<int64_t, PRECISION(kInt64)>;
 
 REGISTER_LITE_KERNEL(sequence_reverse, kXPU, kFloat, kNCHW, SequenceReverseFp32, def)
     .BindInput("X", {LiteType::GetTensorTy(TARGET(kXPU))})

@@ -14,7 +14,6 @@
 
 #include "lite/kernels/xpu/search_fc_compute.h"
 #include "lite/backends/xpu/xpu_header_sitter.h"
-#include "lite/backends/xpu/debug.h"
 #include "lite/core/op_registry.h"
 
 namespace paddle {
@@ -23,9 +22,7 @@ namespace kernels {
 namespace xpu {
 
 void SearchFcCompute::PrepareForRun() {
-  void* maxs_xpu_ptr = nullptr;
-  xpu_malloc(&maxs_xpu_ptr, 64 * sizeof(float));
-  maxs_xpu_guard_.reset(maxs_xpu_ptr);
+  maxs_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(float));
 }
 
 void SearchFcCompute::Run() {
@@ -62,41 +59,14 @@ void SearchFcCompute::Run() {
   const auto* weights = w->data<int16_t>();
   const float* bias_data = b->data<float>();
 
-  //paddle::lite::xpu::dump_xpu_mem(bottom_data,
-      //bottom->numel(),
-      //"searchfc bottom", 1, 20);
-  //paddle::lite::xpu::dump_xpu_mem(weights,
-      //w->numel(),
-      //"searchfc weight", 1000, 20);
-  //{
-    //float debug_data0[5];
-    //xpu_memcpy(&debug_data0[0], bottom_data, 5 * sizeof(float), XPUMemcpyKind::XPU_DEVICE_TO_HOST);
-    //printf("SearchFc bottom %f %f %f %f %f\n",
-        //debug_data0[0], debug_data0[1], debug_data0[2], debug_data0[3], debug_data0[4]);
-  //}
-  //{
-    //int16_t debug_data0[5];
-    //xpu_memcpy(&debug_data0[0], weights, 5 * sizeof(int16_t), XPUMemcpyKind::XPU_DEVICE_TO_HOST);
-    //printf("SearchFc weight %d %d %d %d %d\n",
-        //(int)debug_data0[0], (int)debug_data0[1], (int)debug_data0[2], (int)debug_data0[3], (int)debug_data0[4]);
-    //printf("max_w %f\n", max_w);
-  //}
-
-  //auto& dev_ctx = ctx.template device_context<DeviceContext>();
-  // do-findmax
-  //float* maxs_xpu = (float*) xpu::alloc_workspace(dev_ctx.x_context(), 8 * sizeof(float));
-  //PADDLE_ENFORCE(maxs_xpu != nullptr, "Fail to alloc L3");
-  float* maxs_xpu = (float*)maxs_xpu_guard_.get();
+  float* maxs_xpu = (float*)maxs_xpu_guard_->addr_;
   float maxs_cpu[8] = {0.0f, 0.0f, 0.0f, 0.0f, max_w, 0.0f, 0.0f, 0.0f};
-  //memory::Copy(boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-          //(void*)maxs_xpu, platform::CPUPlace(), (void*)maxs_cpu, 8 * sizeof(float));
   xpu_memcpy(maxs_xpu,
       &maxs_cpu[0],
       8 * sizeof(float),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
   int r = xdnn::findmax<float>(ctx.GetRawContext(), bottom_data, batch * _in, maxs_xpu);
   CHECK_EQ(r, 0);
-  xpu_memcpy(maxs_cpu, maxs_xpu, 8 * sizeof(float), XPUMemcpyKind::XPU_DEVICE_TO_HOST);
 
   r = xdnn::gemm_int16_maxptr<float, int16_t, float>(ctx.GetRawContext(),
           false, true, /*trans_a, trans_b*/
@@ -106,22 +76,6 @@ void SearchFcCompute::Run() {
           top_data, _out, bias_data, /* data_c, ldc, bias*/
           act, maxs_xpu, maxs_xpu + 4, nullptr /*act, max_a, max_b, max_c*/);
   CHECK_EQ(r, 0);
-
-  //{
-    //float debug_data0[5];
-    //xpu_memcpy(&debug_data0[0], bias_data, 5 * sizeof(float), XPUMemcpyKind::XPU_DEVICE_TO_HOST);
-    //printf("SearchFc bias %f %f %f %f %f\n",
-        //debug_data0[0], debug_data0[1], debug_data0[2], debug_data0[3], debug_data0[4]);
-  //}
-  //{
-    //float debug_data0[5];
-    //xpu_memcpy(&debug_data0[0], top_data, 5 * sizeof(float), XPUMemcpyKind::XPU_DEVICE_TO_HOST);
-    //printf("SearchFc top %f %f %f %f %f\n",
-        //debug_data0[0], debug_data0[1], debug_data0[2], debug_data0[3], debug_data0[4]);
-  //}
-  //paddle::lite::xpu::dump_xpu_mem(top_data,
-      //top->numel(),
-      //"searchfc top", (top->numel() > 100) ? 20 : 1, 20);
 }
 
 }  // namespace xpu

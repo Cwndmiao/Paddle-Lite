@@ -21,7 +21,7 @@ namespace lite {
 namespace kernels {
 namespace xpu {
 
-void XPUSequenceArithmeticCompute::Run() {
+void SequenceArithmeticCompute::Run() {
   auto& param = this->template Param<param_t>();
   auto& ctx = this->ctx_->template As<XPUContext>();
 
@@ -40,13 +40,13 @@ void XPUSequenceArithmeticCompute::Run() {
   //{
     //float debug_data0[5];
     //xpu_memcpy(&debug_data0[0], bottom_data0 + len1 - 5, 5 * sizeof(float), XPUMemcpyKind::XPU_DEVICE_TO_HOST);
-    //printf("cwndmiao debug XPUSequenceArithmeticCompute data0 %f %f %f %f %f\n",
+    //printf("cwndmiao debug SequenceArithmeticCompute data0 %f %f %f %f %f\n",
         //debug_data0[0], debug_data0[1], debug_data0[2], debug_data0[3], debug_data0[4]);
   //}
   //{
     //float debug_data1[5];
     //xpu_memcpy(&debug_data1[0], bottom_data1 + len2 - 5, 5 * sizeof(float), XPUMemcpyKind::XPU_DEVICE_TO_HOST);
-    //printf("cwndmiao debug XPUSequenceArithmeticCompute data1 %f %f %f %f %f\n",
+    //printf("cwndmiao debug SequenceArithmeticCompute data1 %f %f %f %f %f\n",
         //debug_data1[0], debug_data1[1], debug_data1[2], debug_data1[3], debug_data1[4]);
   //}
 
@@ -97,7 +97,7 @@ void XPUSequenceArithmeticCompute::Run() {
   //{
     //float debug_top[5];
     //xpu_memcpy(&debug_top[0], top_data + len1 - 5, 5 * sizeof(float), XPUMemcpyKind::XPU_DEVICE_TO_HOST);
-    //printf("cwndmiao debug XPUSequenceArithmeticCompute top %f %f %f %f %f\n",
+    //printf("cwndmiao debug SequenceArithmeticCompute top %f %f %f %f %f\n",
         //debug_top[0], debug_top[1], debug_top[2], debug_top[3], debug_top[4]);
     //auto dddim = top->dims();
     //printf("dddim %d %d\n", (int)dddim[0], (int)dddim[1]);
@@ -114,7 +114,7 @@ REGISTER_LITE_KERNEL(
     kXPU,
     kFloat,
     kNCHW,
-    paddle::lite::kernels::xpu::XPUSequenceArithmeticCompute,
+    paddle::lite::kernels::xpu::SequenceArithmeticCompute,
     def)
     .BindInput("X", {LiteType::GetTensorTy(TARGET(kXPU))})
     .BindInput("Y", {LiteType::GetTensorTy(TARGET(kXPU))})
@@ -126,7 +126,7 @@ REGISTER_LITE_KERNEL(
     kXPU,
     kFloat,
     kNCHW,
-    paddle::lite::kernels::xpu::XPUSequenceArithmeticCompute,
+    paddle::lite::kernels::xpu::SequenceArithmeticCompute,
     def)
     .BindInput("X", {LiteType::GetTensorTy(TARGET(kXPU))})
     .BindInput("Y", {LiteType::GetTensorTy(TARGET(kXPU))})

@@ -23,7 +23,7 @@ namespace lite {
 namespace kernels {
 namespace xpu {
 
-class XPUSequenceArithmeticCompute : public KernelLite<TARGET(kXPU), PRECISION(kFloat)> {
+class SequenceArithmeticCompute : public KernelLite<TARGET(kXPU), PRECISION(kFloat)> {
  public:
   using param_t = operators::SequenceArithmeticParam;
 

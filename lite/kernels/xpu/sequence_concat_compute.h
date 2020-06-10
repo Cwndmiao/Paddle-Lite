@@ -14,9 +14,8 @@
 
 #pragma once
 
-#include <memory>
 #include "lite/core/kernel.h"
-#include "lite/kernels/xpu/utils.h"  // XPUFreeDeleter
+#include "lite/backends/xpu/target_wrapper.h"
 
 namespace paddle {
 namespace lite {
@@ -32,8 +31,11 @@ class SequenceConcatCompute : public KernelLite<TARGET(kXPU), PRECISION(kFloat)>
   void Run() override;
 
  private:
-  std::unique_ptr<void, XPUFreeDeleter> lod0_xpu_guard_;
-  std::unique_ptr<void, XPUFreeDeleter> lod1_xpu_guard_;
+  XPUScratchPadGuard lod0_xpu_guard_;
+  XPUScratchPadGuard lod1_xpu_guard_;
+
+  std::unique_ptr<int[]> lod0_cpu;
+  std::unique_ptr<int[]> lod1_cpu;
 };
 
 }  // namespace xpu

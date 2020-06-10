@@ -24,6 +24,9 @@
 #include "lite/utils/cp_logging.h"
 #include "lite/utils/string.h"
 
+DEFINE_bool(perf, false, "perf?");
+DEFINE_string(perf_input, "perf_input", "perf_input");
+
 namespace paddle {
 namespace lite {
 
@@ -65,6 +68,67 @@ void parse_input() {
   return;
 }
 
+class mmdnn_reader {
+    std::ifstream inF;
+    std::vector<std::string> string_split(const std::string& in, const std::string& delim) {
+        std::vector<std::string> ret;
+        if (in == "") {
+            return ret;
+        }
+        auto begpos = in.find_first_not_of(delim);
+        while (begpos != std::string::npos) {
+            auto endpos = in.find_first_of(delim, begpos);
+            if (endpos == std::string::npos) {
+                endpos = in.size();
+            }
+            std::string ssubstr = in.substr(begpos, endpos - begpos);
+            ret.push_back(ssubstr);
+            begpos = endpos + 1;
+            if (endpos >= (in.size() - 1)) {
+                break;
+            }
+        }
+        return ret;
+    }
+public:
+    std::vector<int64_t> data[6];
+    std::vector<uint64_t> lod[6];
+
+    void init(std::string file_name) {
+        inF.open(file_name);
+    }
+
+    int read(int maxline) {
+        for (int i = 0; i < 6; i++) {
+            data[i].clear();
+        }
+        for (int i = 0; i < 6; i++) {
+            lod[i].clear();
+            lod[i].push_back(0);
+        }
+        std::string line;
+        int cnt = 0;
+        while (cnt < maxline && getline(inF, line)) {
+            std::vector<std::string> split1 = string_split(line, ";");
+            for (int i = 1; i < 7; i++) {
+                std::vector<std::string> split2 = string_split(split1[i], " ");
+                if (split2.size() == 0) {
+                    split2.push_back("1280000");
+                }
+                for (int j = 0; j < split2.size(); j++) {
+                    data[i - 1].push_back(std::stoi(split2[j].c_str(), nullptr, 0));
+                }
+                //if (i % 2 == 1) {
+                    //lod[i / 2].push_back(lod[i / 2].back() + split2.size());
+                //}
+                lod[i - 1].push_back(lod[i - 1].back() + split2.size());
+            }
+            cnt++;
+        }
+        return cnt;
+    }
+};
+
 TEST(MMDNN, test_mmdnn_lite_xpu) {
   lite_api::CxxConfig config;
   config.set_model_dir(FLAGS_model_dir);
@@ -75,6 +139,43 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
                            lite_api::Place{TARGET(kHost), PRECISION(kFloat)}});
   config.set_xpu_workspace_l3_size_per_thread();
   auto predictor = lite_api::CreatePaddlePredictor(config);
+
+  if (FLAGS_perf) {
+    mmdnn_reader reader;
+    reader.init(FLAGS_perf_input);
+    int UB_batch = 40;      //  upper bound of batch
+    //int curr = 0;
+    int iter = 0;
+    double tsc_sum = 0;
+
+    while (true) {
+      int batch = reader.read(UB_batch);
+      if (batch <= 0) {
+        break;
+      }
+      //curr += batch;
+      ++iter;
+      for (int i = 0; i < 6; ++i) {
+        auto input_x = predictor->GetInput(i);
+        input_x->Resize({(int64_t)reader.data[i].size(), 1});
+        input_x->SetLoD({reader.lod[i]});
+        auto* data_x = input_x->mutable_data<int64_t>();
+        memcpy(data_x, reader.data[i].data(), reader.data[i].size() * sizeof(int64_t));
+      }
+
+      auto start = GetCurrentUS();
+      predictor->Run();
+      auto end = GetCurrentUS();
+      tsc_sum += end - start;
+    }
+    LOG(INFO) << "================== Speed Report ===================";
+    LOG(INFO) << "Model: " << FLAGS_model_dir << ", threads num " << FLAGS_threads
+      << ", warmup: " << FLAGS_warmup << ", repeats: " << iter
+      << ", spend " << tsc_sum / iter / 1000.0
+      << " ms in average.";
+
+    return;
+  }
 
   parse_input();
 
@@ -133,39 +234,6 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
     auto* data5 = input_tensor5->mutable_data<int64_t>();
     memcpy(data5, input5.data(), sizeof(int64_t) * input5.size());
   }
-  //for (int i = 0; i < input_num; i++) {
-    //data0[i] = 1;
-  //}
-  //auto input_tensor1 = predictor->GetInput(1);
-  //input_tensor1->Resize(input_shape);
-  //auto* data1 = input_tensor1->mutable_data<int64_t>();
-  //for (int i = 0; i < input_num; i++) {
-    //data1[i] = 1;
-  //}
-  //auto input_tensor2 = predictor->GetInput(2);
-  //input_tensor2->Resize(input_shape);
-  //auto* data2 = input_tensor2->mutable_data<int64_t>();
-  //for (int i = 0; i < input_num; i++) {
-    //data2[i] = 1;
-  //}
-  //auto input_tensor3 = predictor->GetInput(3);
-  //input_tensor3->Resize(input_shape);
-  //auto* data3 = input_tensor3->mutable_data<int64_t>();
-  //for (int i = 0; i < input_num; i++) {
-    //data3[i] = 1;
-  //}
-  //auto input_tensor4 = predictor->GetInput(4);
-  //input_tensor4->Resize(input_shape);
-  //auto* data4 = input_tensor4->mutable_data<int64_t>();
-  //for (int i = 0; i < input_num; i++) {
-    //data4[i] = 1;
-  //}
-  //auto input_tensor5 = predictor->GetInput(5);
-  //input_tensor5->Resize(input_shape);
-  //auto* data5 = input_tensor5->mutable_data<int64_t>();
-  //for (int i = 0; i < input_num; i++) {
-    //data5[i] = 1;
-  //}
 
   for (int i = 0; i < FLAGS_warmup; ++i) {
     predictor->Run();

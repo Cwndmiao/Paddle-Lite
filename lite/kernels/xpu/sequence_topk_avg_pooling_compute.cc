@@ -22,9 +22,10 @@ namespace kernels {
 namespace xpu {
 
 void SequenceTopkAvgPoolingCompute::PrepareForRun() {
-  void* lod_xpu_ptr = nullptr;
-  xpu_malloc(&lod_xpu_ptr, 256 * sizeof(int));
-  lod_xpu_guard_.reset(lod_xpu_ptr);
+  lod_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(256 * sizeof(int));
+  in_lod_cpu.reset(new int[64]);
+  row_lod_cpu.reset(new int[64]);
+  col_lod_cpu.reset(new int[64]);
 }
 
 void SequenceTopkAvgPoolingCompute::Run() {
@@ -79,14 +80,14 @@ void SequenceTopkAvgPoolingCompute::Run() {
   //row_lod_xpu = &in_lod_xpu[in_lod.size()];
   //col_lod_xpu = &row_lod_xpu[row_lod.size()];
   //topks_xpu = &col_lod_xpu[col_lod.size()];
-  in_lod_xpu = (int*)lod_xpu_guard_.get();
+  in_lod_xpu = (int*)lod_xpu_guard_->addr_;
   row_lod_xpu = in_lod_xpu + in_lod.size();
   col_lod_xpu = row_lod_xpu + row_lod.size();
   topks_xpu = col_lod_xpu + col_lod.size();
 
-  std::unique_ptr<int[]> in_lod_cpu(new int[in_lod.size()]);
-  std::unique_ptr<int[]> row_lod_cpu(new int[row_lod.size()]);
-  std::unique_ptr<int[]> col_lod_cpu(new int[col_lod.size()]);
+  //std::unique_ptr<int[]> in_lod_cpu(new int[in_lod.size()]);
+  //std::unique_ptr<int[]> row_lod_cpu(new int[row_lod.size()]);
+  //std::unique_ptr<int[]> col_lod_cpu(new int[col_lod.size()]);
   //int* in_lod_cpu = (int*)malloc(in_lod.size() * sizeof(int));
   //int* row_lod_cpu = (int*)malloc(row_lod.size() * sizeof(int));
   //int* col_lod_cpu = (int*)malloc(col_lod.size() * sizeof(int));

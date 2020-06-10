@@ -14,9 +14,8 @@
 
 #pragma once
 
-#include <memory>
 #include "lite/core/kernel.h"
-#include "lite/kernels/xpu/utils.h"  // XPUFreeDeleter
+#include "lite/backends/xpu/target_wrapper.h"
 
 namespace paddle {
 namespace lite {
@@ -32,8 +31,10 @@ class VarConv2DCompute : public KernelLite<TARGET(kXPU), PRECISION(kFloat)> {
   void Run() override;
 
  private:
-  std::unique_ptr<void, XPUFreeDeleter> offset_x_xpu_guard_;
-  std::unique_ptr<void, XPUFreeDeleter> offset_y_xpu_guard_;
+  XPUScratchPadGuard offset_x_xpu_guard_;
+  XPUScratchPadGuard offset_y_xpu_guard_;
+  std::unique_ptr<int[]> offset_x_cpu;
+  std::unique_ptr<int[]> offset_y_cpu;
 };
 
 }  // namespace xpu

@@ -14,9 +14,8 @@
 
 #pragma once
 
-#include <memory>
 #include "lite/core/kernel.h"
-#include "lite/kernels/xpu/utils.h"  // XPUFreeDeleter
+#include "lite/backends/xpu/target_wrapper.h"
 
 namespace paddle {
 namespace lite {
@@ -32,7 +31,10 @@ class SequenceTopkAvgPoolingCompute : public KernelLite<TARGET(kXPU), PRECISION(
   void Run() override;
 
  private:
-  std::unique_ptr<void, XPUFreeDeleter> lod_xpu_guard_;
+  XPUScratchPadGuard lod_xpu_guard_;
+  std::unique_ptr<int[]> in_lod_cpu;
+  std::unique_ptr<int[]> row_lod_cpu;
+  std::unique_ptr<int[]> col_lod_cpu;
 };
 
 }  // namespace xpu

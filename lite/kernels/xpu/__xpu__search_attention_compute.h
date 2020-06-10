@@ -14,9 +14,8 @@
 
 #pragma once
 
-#include <memory>
 #include "lite/core/kernel.h"
-#include "lite/kernels/xpu/utils.h"  // XPUFreeDeleter
+#include "lite/backends/xpu/target_wrapper.h"
 
 namespace paddle {
 namespace lite {
@@ -32,13 +31,17 @@ class XPUSearchAttentionCompute : public KernelLite<TARGET(kXPU), PRECISION(kFlo
   void Run() override;
 
  private:
-  std::unique_ptr<void, XPUFreeDeleter> offset_xpu_guard_;
-  std::unique_ptr<void, XPUFreeDeleter> pad_begin_xpu_guard_;
-  std::unique_ptr<void, XPUFreeDeleter> w_max_xpu_guard_;
-  std::unique_ptr<void, XPUFreeDeleter> buffer_at_l3_guard_;
-  std::unique_ptr<void, XPUFreeDeleter> buffer_at_gm_guard_;
-  int l3_slot_size = 40 * 128 * 128;
-  int gm_slot_size = 40 * 512 * 512;
+  XPUScratchPadGuard offset_xpu_guard_;
+  XPUScratchPadGuard pad_begin_xpu_guard_;
+  XPUScratchPadGuard w_max_xpu_guard_;
+  XPUScratchPadGuard buffer_at_l3_guard_;
+  XPUScratchPadGuard buffer_at_gm_guard_;
+
+  std::unique_ptr<int[]> offset_cpu;
+  std::unique_ptr<int[]> pad_begin_cpu;
+
+  const int L3_SLOT_SIZE = 40 * 128 * 128;
+  const int GM_SLOT_SIZE = 40 * 512 * 512;
 };
 
 }  // namespace xpu

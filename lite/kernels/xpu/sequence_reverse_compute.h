@@ -14,9 +14,8 @@
 
 #pragma once
 
-#include <memory>
 #include "lite/core/kernel.h"
-#include "lite/kernels/xpu/utils.h"  // XPUFreeDeleter
+#include "lite/backends/xpu/target_wrapper.h"
 
 namespace paddle {
 namespace lite {
@@ -24,7 +23,7 @@ namespace kernels {
 namespace xpu {
 
 template <typename T, PrecisionType PType>
-class XPUSequenceReverseCompute : public KernelLite<TARGET(kXPU), PType> {
+class SequenceReverseCompute : public KernelLite<TARGET(kXPU), PType> {
  public:
   using param_t = operators::SequenceReverseParam;
 
@@ -33,7 +32,8 @@ class XPUSequenceReverseCompute : public KernelLite<TARGET(kXPU), PType> {
   void Run() override;
 
  private:
-  std::unique_ptr<void, XPUFreeDeleter> lod_xpu_guard_;
+  XPUScratchPadGuard lod_xpu_guard_;
+  std::unique_ptr<int[]> lod_cpu;
 };
 
 }  // namespace xpu

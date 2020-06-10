@@ -54,8 +54,10 @@ void ConcatCompute::Run() {
     CHECK(ww == w_except_axis) << "concat: w should be eual except for axis!";
   }
 
-  std::unique_ptr<int[]> in_w_host(new int[n]);
-  std::unique_ptr<const float*[]> ptrs(new const float*[n]);
+  //std::unique_ptr<int[]> in_w_host(new int[n]);
+  //std::unique_ptr<const float*[]> ptrs(new const float*[n]);
+  int in_w_host[n];
+  const float* ptrs[n];
 
   for (int i = 0; i < n; ++i) {
     ptrs[i] = ins[i]->data<float>();
@@ -63,8 +65,8 @@ void ConcatCompute::Run() {
   }
 
   int r = xdnn::concat<float>(ctx.GetRawContext(),
-      h, (const int*)in_w_host.get(), n,
-      (const float**)ptrs.get(), out->mutable_data<float>(TARGET(kXPU)));
+      h, (const int*)in_w_host, n,
+      (const float**)ptrs, out->mutable_data<float>(TARGET(kXPU)));
   CHECK(r == 0);
 }
 

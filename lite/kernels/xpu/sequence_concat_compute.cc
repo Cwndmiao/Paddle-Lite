@@ -23,13 +23,11 @@ namespace kernels {
 namespace xpu {
 
 void SequenceConcatCompute::PrepareForRun() {
-  void* lod0_xpu_ptr = nullptr;
-  xpu_malloc(&lod0_xpu_ptr, 64 * sizeof(int));
-  lod0_xpu_guard_.reset(lod0_xpu_ptr);
+  lod0_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
+  lod1_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
 
-  void* lod1_xpu_ptr = nullptr;
-  xpu_malloc(&lod1_xpu_ptr, 64 * sizeof(int));
-  lod1_xpu_guard_.reset(lod1_xpu_ptr);
+  lod0_cpu.reset(new int[64]);
+  lod1_cpu.reset(new int[64]);
 }
 
 template <typename T>
@@ -106,8 +104,8 @@ void SequenceConcatCompute::Run() {
 
   int batch_size = lod0.size() - 1;
 
-  int* lod0_xpu = (int*)lod0_xpu_guard_.get();
-  int* lod1_xpu = (int*)lod1_xpu_guard_.get();
+  int* lod0_xpu = (int*)lod0_xpu_guard_->addr_;
+  int* lod1_xpu = (int*)lod1_xpu_guard_->addr_;
   //int* lod0_xpu = nullptr;
   //int* lod1_xpu = nullptr;
   //lod0_xpu = (int*) xpu::alloc_workspace(dev_ctx.x_context(), lod0.size() * sizeof(int));
@@ -115,8 +113,8 @@ void SequenceConcatCompute::Run() {
   //PADDLE_ENFORCE(lod0_xpu != nullptr, "Fail to alloc L3");
   //PADDLE_ENFORCE(lod1_xpu != nullptr, "Fail to alloc L3");
 
-  std::unique_ptr<int[]> lod0_cpu(new int[lod0.size()]);
-  std::unique_ptr<int[]> lod1_cpu(new int[lod1.size()]);
+  //std::unique_ptr<int[]> lod0_cpu(new int[lod0.size()]);
+  //std::unique_ptr<int[]> lod1_cpu(new int[lod1.size()]);
   //int* lod0_cpu = (int*)malloc(lod0.size() * sizeof(int));
   //int* lod1_cpu = (int*)malloc(lod1.size() * sizeof(int));
   for (int i = 0; i < lod0.size(); ++i) {
@@ -125,11 +123,11 @@ void SequenceConcatCompute::Run() {
   for (int i = 0; i < lod1.size(); ++i) {
       lod1_cpu[i] = lod1[i];
   }
-  xpu_memcpy(lod0_xpu_guard_.get(),
+  xpu_memcpy(lod0_xpu,
       lod0_cpu.get(),
       lod0.size() * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-  xpu_memcpy(lod1_xpu_guard_.get(),
+  xpu_memcpy(lod1_xpu,
       lod1_cpu.get(),
       lod1.size() * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
