@@ -1568,6 +1568,83 @@ struct XPUSearchAttentionParam : ParamBase {
   float mask{1.0f};
 };
 
+struct XPUBidEmbGrnnAttParam : ParamBase {
+  lite::Tensor* id0{};
+  lite::Tensor* id1{};
+  lite::Tensor* emb_tbl{};
+  lite::Tensor* fw_grnn_wh{};
+  lite::Tensor* fw_grnn_wi{};
+  lite::Tensor* rv_grnn_wh{};
+  lite::Tensor* rv_grnn_wi{};
+  lite::Tensor* att_fc_w{};
+  lite::Tensor* att_fc_b{};
+
+  std::vector<float> fw_grnn_wh_maxs;
+  std::vector<float> fw_grnn_wi_maxs;
+  std::vector<float> rv_grnn_wh_maxs;
+  std::vector<float> rv_grnn_wi_maxs;
+  float att_fc_w_max;
+
+  lite::Tensor* fw_grnn_pool_out{}; // 1
+  lite::Tensor* rv_grnn_pool_out{}; // 2
+  lite::Tensor* att_pool_out{};     // 3
+  lite::Tensor* concat_3in1_out{};  // 4
+  lite::Tensor* emb_fw_out{};       // 5
+};
+
+struct XPUBidEmbAttParam : ParamBase {
+  lite::Tensor* id0{};
+  lite::Tensor* id1{};
+  lite::Tensor* emb_tbl{};
+  lite::Tensor* att_fc_w{};
+  lite::Tensor* att_fc_b{};
+
+  float att_fc_w_max;
+
+  lite::Tensor* att_pool_out{};     // 3
+  lite::Tensor* emb_fw_out{};       // 5
+};
+
+struct XPUMatchConvTopkParam : ParamBase {
+  lite::Tensor* input_x{};
+  lite::Tensor* input_y{};
+  lite::Tensor* input_w{};
+  lite::Tensor* conv_w{};
+
+  float input_w_max;
+  float conv_w_max;
+  std::vector<int> topks;
+  int channel_num;
+  int dim_t;
+
+  lite::Tensor* topk_out{};       // 5
+};
+
+struct XPUMMDNNMergeAllParam : ParamBase {
+  std::vector<lite::Tensor*> concat_7in1_x;
+  std::vector<lite::Tensor*> concat_2in1_x;
+  lite::Tensor* grnn_fw_wh{};
+  lite::Tensor* grnn_fw_wi{};
+  lite::Tensor* grnn_rv_wh{};
+  lite::Tensor* grnn_rv_wi{};
+  lite::Tensor* fc0_w{};
+  lite::Tensor* fc0_b{};
+  lite::Tensor* fc1_w{};
+  lite::Tensor* fc1_b{};
+  lite::Tensor* fc2_w{};
+  lite::Tensor* fc2_b{};
+
+  std::vector<float> grnn_fw_wh_maxs;
+  std::vector<float> grnn_fw_wi_maxs;
+  std::vector<float> grnn_rv_wh_maxs;
+  std::vector<float> grnn_rv_wi_maxs;
+  float fc0_w_max;
+  float fc1_w_max;
+  float fc2_w_max;
+
+  lite::Tensor* out{};       // 5
+};
+
 }  // namespace operators
 }  // namespace lite
 }  // namespace paddle

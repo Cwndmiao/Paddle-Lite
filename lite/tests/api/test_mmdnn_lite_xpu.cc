@@ -246,6 +246,10 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
 
   auto out = predictor->GetOutput(0);
   LOG(INFO) << "out=" << out->data<float>()[0];
+  LOG(INFO) << "out=" << out->data<float>()[1];
+  LOG(INFO) << "out=" << out->data<float>()[2];
+  LOG(INFO) << "out=" << out->data<float>()[3];
+  LOG(INFO) << "out=" << out->data<float>()[4];
 
   LOG(INFO) << "================== Speed Report ===================";
   LOG(INFO) << "Model: " << FLAGS_model_dir << ", threads num " << FLAGS_threads

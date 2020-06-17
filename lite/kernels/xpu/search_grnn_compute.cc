@@ -176,7 +176,7 @@ void SearchGrnnCompute::Run() {
     top->Resize(top_dims_vec);
     auto* top_hidden = top->mutable_data<float>(TARGET(kXPU));
     const auto* dense_e2h = wi->data<int16_t>();
-    const auto* dense_h2h = wh->data<int16_t>();
+    const auto* dense_h2h = wh->data<float>();
 
     //auto& dev_ctx = ctx.template device_context<DeviceContext>();
 
@@ -280,7 +280,7 @@ void SearchGrnnCompute::Run() {
     }
 
     // Call xpu search_grnn
-    ret = xdnn::search_grnn<float, int16_t>(ctx.GetRawContext(),
+    ret = xdnn::search_grnn<float, float>(ctx.GetRawContext(),
             _cap_l, _cap_h, _cap_e,
             max_width, new_offset_xpu,
             buffer_data, dense_h2h, hidden,

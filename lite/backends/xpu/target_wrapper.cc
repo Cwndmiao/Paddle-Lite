@@ -45,7 +45,8 @@ void TargetWrapperXPU::MemcpySync(void* dst,
 XPUScratchPadGuard TargetWrapperXPU::MallocScratchPad(size_t size, bool use_l3) {
   void* ptr{nullptr};
   if (use_l3) {
-    ptr = xdnn::alloc_workspace(XPUContext::GetRawContext(), size);
+    //ptr = xdnn::alloc_workspace(XPUContext::GetRawContext(), size);
+    ptr = TargetWrapperXPU::Malloc(size);
   } else {
     ptr = TargetWrapperXPU::Malloc(size);
   }

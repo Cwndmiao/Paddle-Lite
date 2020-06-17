@@ -14,6 +14,7 @@
 
 #include "lite/kernels/xpu/match_matrix_tensor_compute.h"
 #include "lite/backends/xpu/xpu_header_sitter.h"
+#include "lite/backends/xpu/debug.h"
 #include "lite/core/op_registry.h"
 
 namespace paddle {
@@ -96,6 +97,7 @@ void MatchMatrixTensorCompute::Run() {
           xdnn::Activation_t::LINEAR,
           0.0f, max_w, wx_max /*max_a, max_b, max_c*/);
   CHECK(r == 0);
+  paddle::lite::xpu::dump_xpu_mem(bottom_l_trans_data, x->dims()[0] * dim_t * dim_in, "xw", x->dims()[0] * dim_t * dim_in);
 
   int batch_size = x->lod()[0].size() - 1;
 
@@ -165,6 +167,10 @@ void MatchMatrixTensorCompute::Run() {
   out_lod.push_back(offset_l);
   out_lod.push_back(offset_r);
   out->set_lod(out_lod);
+
+  paddle::lite::xpu::dump_xpu_mem(x->data<float>(), x->numel(), "left", x->numel());
+  paddle::lite::xpu::dump_xpu_mem(y->data<float>(), y->numel(), "right", y->numel());
+  paddle::lite::xpu::dump_xpu_mem(out_data, out->numel(), "xwy_out", out->numel());
 }
 
 }  // namespace xpu

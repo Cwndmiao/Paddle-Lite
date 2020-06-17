@@ -14,6 +14,7 @@
 
 #include "lite/kernels/xpu/concat_compute.h"
 #include "lite/backends/xpu/xpu_header_sitter.h"
+#include "lite/backends/xpu/debug.h"
 #include "lite/core/op_registry.h"
 
 namespace paddle {
@@ -68,6 +69,14 @@ void ConcatCompute::Run() {
       h, (const int*)in_w_host, n,
       (const float**)ptrs, out->mutable_data<float>(TARGET(kXPU)));
   CHECK(r == 0);
+
+  //if (n == 7) {
+
+    //for (int i = 0; i < 7; ++i) {
+      //paddle::lite::xpu::dump_xpu_mem(ptrs[i], 5 * 128, "fc0_in", 5 * 128);
+    //}
+    //paddle::lite::xpu::dump_xpu_mem(out->data<float>(), 5 * 1152, "fc0_in", 5 * 1152);
+  //}
 }
 
 }  // namespace xpu
