@@ -339,6 +339,13 @@ struct ConcatParam : ParamBase {
   }
 };
 
+struct ClipParam : ParamBase {
+  lite::Tensor* X{};
+  lite::Tensor* Out{};
+  float min{0.0f};
+  float max{0.0f};
+};
+
 /// ----------------------- activation operators ----------------------
 struct ActivationParam : ParamBase {
   const lite::Tensor* X{};
@@ -1513,6 +1520,16 @@ struct XPUFcParam : ParamBase {
   float w_max{0.0f};
   bool transpose_w{true};
   std::string activation_type{""};
+};
+
+struct XPUResNetCbamParam : ParamBase {
+  lite::Tensor* input{};
+  std::vector<lite::Tensor*> filter;
+  std::vector<lite::Tensor*> bias;
+  std::vector<lite::Tensor*> max_filter;
+  lite::Tensor* output{};
+
+  float pool_p{1.0f};
 };
 
 }  // namespace operators
