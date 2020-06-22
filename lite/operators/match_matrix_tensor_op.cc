@@ -101,8 +101,8 @@ bool MatchMatrixTensorOpLite::AttachImpl(const cpp::OpDesc& op_desc,
   if (op_desc.HasAttr("float_to_fix")) {
     param_.float_to_fix = op_desc.GetAttr<bool>("float_to_fix");
   }
-  if (op_desc.HasAttr("max_w")) {
-    param_.max_w = op_desc.GetAttr<float>("max_w");
+  if (op_desc.HasAttr("w_max")) {
+    param_.w_max = op_desc.GetAttr<float>("w_max");
   }
 #endif
 

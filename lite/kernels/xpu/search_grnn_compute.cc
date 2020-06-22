@@ -14,7 +14,6 @@
 
 #include "lite/kernels/xpu/search_grnn_compute.h"
 #include "lite/backends/xpu/xpu_header_sitter.h"
-#include "lite/backends/xpu/debug.h"
 #include "lite/core/op_registry.h"
 
 namespace paddle {
@@ -23,19 +22,8 @@ namespace kernels {
 namespace xpu {
 
 void SearchGrnnCompute::PrepareForRun() {
-  //void* offset_xpu_ptr = nullptr;
-  //xpu_malloc(&offset_xpu_ptr, 64 * sizeof(int));
-  //offset_xpu_guard_.reset(offset_xpu_ptr);
   offset_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(64 * sizeof(int));
-
-  //void* new_offset_xpu_ptr = nullptr;
-  //xpu_malloc(&new_offset_xpu_ptr, 64 * sizeof(int));
-  //new_offset_xpu_guard_.reset(new_offset_xpu_ptr);
   new_offset_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(256 * sizeof(int));
-
-  //void* maxs_xpu_ptr = nullptr;
-  //xpu_malloc(&maxs_xpu_ptr, 16 * sizeof(float));
-  //maxs_xpu_guard_.reset(maxs_xpu_ptr);
   maxs_xpu_guard_ = TargetWrapperXPU::MallocScratchPad(16 * sizeof(float));
 
   idx_sorted_by_width_data_cpu.reset(new int[64]);
@@ -43,52 +31,37 @@ void SearchGrnnCompute::PrepareForRun() {
   new_offset_cpu.reset(new int[256]);
 }
 
-  void SearchGrnnCompute::xpu_prepare_layout(const operators::SearchGrnnParam& param,
-                      const paddle::lite::Tensor* input_blob) const {
-    auto* _idx_sorted_by_width = param.idx_sorted_by_width;
-    auto* _layout_input = param.layout_input;
+  void SearchGrnnCompute::prepare_layout(const operators::SearchGrnnParam& param,
+                      const paddle::lite::Tensor* bottom) {
+    auto* idx_sorted_by_width = param.idx_sorted_by_width;
+    auto* layout_input = param.layout_input;
 
-    auto _input = input_blob;
-
-    // usually total length
-    int dim0 = _input->dims()[0];
-    // if it is id only sequence
+    int dim0 = bottom->dims()[0];
     int dim1 = 1;
-
-    // if its a embedding like sequence (dim1 would be embedding_size)
-    if (_input->dims().size() > 1) {
-      dim1 = _input->dims()[1];
+    if (bottom->dims().size() > 1) {
+      dim1 = bottom->dims()[1];
     }
+    int batch = bottom->lod()[0].size() - 1;
+    auto& offset = bottom->lod()[0];
 
-    int batch = _input->lod()[0].size() - 1;
+    idx_sorted_by_width->Resize({batch});
+  std::vector<int> width;
+  width.resize(batch);
 
-    auto& offset = _input->lod()[0];
-
-    _idx_sorted_by_width->Resize({batch});
-    _idx_sorted_by_width->mutable_data<int>(TARGET(kXPU));
-
-    paddle::lite::Tensor _width;
-    _width.Resize({batch});
-    int* width_data = _width.mutable_data<int>();
-
-    //int* idx_sorted_by_width_data_cpu = (int*)malloc(_idx_sorted_by_width->numel() * sizeof(int));
-    //std::unique_ptr<int[]> idx_sorted_by_width_data_cpu(new int[batch]);
-
-    // sort sequence by width (descending) and find the largest width in the batch
+    // sort sequences by width (descending) and find the largest width in the batch
     for (int i = 0; i < batch; i++) {
-      width_data[i] = offset[i + 1] - offset[i];
+      width[i] = offset[i + 1] - offset[i];
       idx_sorted_by_width_data_cpu[i] = i;
     }
     std::sort(idx_sorted_by_width_data_cpu.get(), idx_sorted_by_width_data_cpu.get() + batch,
-              [&_width](int a, int b) {
-                return _width.data<int>()[a] > _width.data<int>()[b];
+              [&width](int a, int b) {
+                return width[a] > width[b];
               });
-    int max_width = width_data[idx_sorted_by_width_data_cpu[0]];
+    int max_width = width[idx_sorted_by_width_data_cpu[0]];
 
     // start of reorganizing the input
     std::vector<size_t> new_offset;
     new_offset.resize(max_width + 1);
-
     new_offset[0] = 0;
     int j = batch - 1;
     int last_width = 0;
@@ -97,17 +70,15 @@ void SearchGrnnCompute::PrepareForRun() {
 
     for (int i = 1; i <= max_width;) {
       for (int k = j; k >= 0; --k) {
-        if (width_data[idx_sorted_by_width_data_cpu[k]] > last_width) {
-          sub_row = width_data[idx_sorted_by_width_data_cpu[k]] - last_width;
+        if (width[idx_sorted_by_width_data_cpu[k]] > last_width) {
+          sub_row = width[idx_sorted_by_width_data_cpu[k]] - last_width;
           sub_col = k + 1;
-
           for (int s = 0; s < sub_row; s++) {
             new_offset[i] = new_offset[i - 1] + sub_col;
             i++;
           }
-
           // move on
-          last_width = width_data[idx_sorted_by_width_data_cpu[k]];
+          last_width = width[idx_sorted_by_width_data_cpu[k]];
           j = k - 1;
           break;
         }
@@ -115,30 +86,18 @@ void SearchGrnnCompute::PrepareForRun() {
     }
 
     // copying to the reorganized buffer
-    if (_input->dims().size() == 1) {
-      //_layout_input.reshape_batch_sequence({dim0}, new_offset);
+    if (bottom->dims().size() == 1) {
     } else {
-      //_layout_input.reshape_batch_sequence({dim0, dim1}, new_offset);
-
       LoD new_lod;
       new_lod.push_back(new_offset);
-      _layout_input->set_lod(new_lod);
-      _layout_input->Resize({dim0, dim1});
+      layout_input->set_lod(new_lod);
+      layout_input->Resize({dim0, dim1});
     }
 
-    xpu_memcpy(_idx_sorted_by_width->mutable_data<int>(TARGET(kXPU)),
+    xpu_memcpy(idx_sorted_by_width->mutable_data<int>(TARGET(kXPU)),
         idx_sorted_by_width_data_cpu.get(),
-        _idx_sorted_by_width->numel() * sizeof(int),
+        idx_sorted_by_width->numel() * sizeof(int),
         XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-    //auto& dev_ctx = ctx.template device_context<DeviceContext>();
-    //memory::Copy(
-            //boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-            //(void*)_idx_sorted_by_width->data<int>(),
-            //platform::CPUPlace(),
-            //(void*)idx_sorted_by_width_data_cpu,
-            //_idx_sorted_by_width->numel() * sizeof(int));
-
-    //std::free(idx_sorted_by_width_data_cpu);
   }
 
 void SearchGrnnCompute::Run() {
@@ -149,18 +108,15 @@ void SearchGrnnCompute::Run() {
     auto* wi = param.wi;
     auto* wh = param.wh;
     auto* top = param.out;
-    auto* _buffer = param.tmp_buffer;
-    auto* _idx_sorted_by_width = param.idx_sorted_by_width;
-    auto* _layout_input = param.layout_input;
-    int _cap_h = param.num_hidden;
-    int _cap_e = param.num_input;
-    int _cap_l = bottom->dims()[0];
-
+    auto* tmp_buffer = param.tmp_buffer;
+    auto* idx_sorted_by_width = param.idx_sorted_by_width;
+    auto* layout_input = param.layout_input;
+    int cap_h = param.num_hidden;
+    int cap_e = param.num_input;
+    int cap_l = bottom->dims()[0];
     auto wi_max = param.wi_max;
     auto wh_max = param.wh_max;
-
     bool float_to_fix = param.float_to_fix;
-
     CHECK(float_to_fix) << "W should be fixed point";
 
     int dim = 1;
@@ -172,41 +128,26 @@ void SearchGrnnCompute::Run() {
     LoD top_lod;
     top_lod.push_back(offset);
     top->set_lod(top_lod);
-    std::vector<int64_t> top_dims_vec{_cap_l, _cap_h};
+    std::vector<int64_t> top_dims_vec{cap_l, cap_h};
     top->Resize(top_dims_vec);
     auto* top_hidden = top->mutable_data<float>(TARGET(kXPU));
     const auto* dense_e2h = wi->data<int16_t>();
-    const auto* dense_h2h = wh->data<float>();
+    const auto* dense_h2h = wh->data<int16_t>();
 
-    //auto& dev_ctx = ctx.template device_context<DeviceContext>();
-
-    // Prepare _idx_sorted_by_width
-    xpu_prepare_layout(param, bottom);
+    // Prepare idx_sorted_by_width
+    prepare_layout(param, bottom);
     int batch = bottom->lod()[0].size() - 1;
-    int max_width = _layout_input->lod()[0].size() - 1;
-    const auto& new_offset = _layout_input->lod()[0];
-    auto* new_emb = _layout_input->mutable_data<float>(TARGET(kXPU));
+    int max_width = layout_input->lod()[0].size() - 1;
+    const auto& new_offset = layout_input->lod()[0];
+    auto* new_emb = layout_input->mutable_data<float>(TARGET(kXPU));
 
     // Prepare offset and new_offset
-    //int* offset_xpu = nullptr;
-    //int* new_offset_xpu = nullptr;
-    //float* maxs_xpu = nullptr;
-	//offset_xpu = (int*) xpu::alloc_workspace(dev_ctx.x_context(), offset.size() * sizeof(int));
-    //new_offset_xpu = (int*) xpu::alloc_workspace(dev_ctx.x_context(), new_offset.size() * sizeof(int));
-	//maxs_xpu = (float*) xpu::alloc_workspace(dev_ctx.x_context(), 16 * sizeof(float));
-    //PADDLE_ENFORCE(offset_xpu != nullptr, "Fail to alloc L3");
-    //PADDLE_ENFORCE(new_offset_xpu != nullptr, "Fail to alloc L3");
-    //PADDLE_ENFORCE(maxs_xpu != nullptr, "Fail to alloc L3");
     int* offset_xpu = (int*)offset_xpu_guard_->addr_;
     int* new_offset_xpu = (int*)new_offset_xpu_guard_->addr_;
     float* maxs_xpu = (float*)maxs_xpu_guard_->addr_;
     CHECK(offset.size() <= 64);
     CHECK(new_offset.size() <= 256);
 
-    //std::unique_ptr<int[]> offset_cpu(new int[offset.size()]);
-    //std::unique_ptr<int[]> new_offset_cpu(new int[new_offset.size()]);
-    //int* offset_cpu = (int*)malloc(offset.size() * sizeof(int));
-    //int* new_offset_cpu = (int*)malloc(new_offset.size() * sizeof(int));
     for (size_t i = 0; i < offset.size(); ++i) {
         offset_cpu[i] = offset[i];
     }
@@ -221,83 +162,60 @@ void SearchGrnnCompute::Run() {
         new_offset_cpu.get(),
         new_offset.size() * sizeof(int),
         XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-    //memory::Copy(
-            //boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-            //(void*)offset_xpu,
-            //platform::CPUPlace(), (void*)offset_cpu,
-            //offset.size() * sizeof(int));
-    //memory::Copy(
-            //boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-            //(void*)new_offset_xpu,
-            //platform::CPUPlace(), (void*)new_offset_cpu,
-            //new_offset.size() * sizeof(int));
 
-    // Call xpu seq2batch
-    int ret = xdnn::search_seq2batch(ctx.GetRawContext(),
+    int r = xdnn::search_seq2batch(ctx.GetRawContext(),
             batch, max_width, dim,
-            _idx_sorted_by_width->data<int>(),
+            idx_sorted_by_width->data<int>(),
             offset_xpu, new_offset_xpu,
             bottom->data<float>(),
-            _layout_input->mutable_data<float>());
-    //PADDLE_ENFORCE(ret == xpu::Error_t::SUCCESS, "XPU kernel error!");
-    (void)ret;
+            new_emb);
+    CHECK(r == 0);
 
     // this buffer is used for book keeping info which will be used in bp
     // buffer also needed in bp, so make it larger
-    _buffer->Resize({20, _cap_l, _cap_h});
-    auto* buffer_data = _buffer->mutable_data<float>(TARGET(kXPU));
-
+    tmp_buffer->Resize({20, cap_l, cap_h});
+    auto* buffer_data = tmp_buffer->mutable_data<float>(TARGET(kXPU));
     // the internal hidden
-    auto* hidden = buffer_data + 19 * _cap_l * _cap_h;
+    auto* hidden = buffer_data + 19 * cap_l * cap_h;
 
     // do-findmax
     float maxs_cpu[16] = {0.0f, 0.0f, 0.0f, 0.0f, wi_max[0], 0.0f, 0.0f, 0.0f,
             wi_max[1], 0.0f, 0.0f, 0.0f, wi_max[2], 0.0f, 0.0f, 0.0f};
-    //memory::Copy(boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-            //(void*)maxs_xpu, platform::CPUPlace(), (void*)maxs_cpu,
-            //16 * sizeof(float));
     xpu_memcpy(maxs_xpu,
         maxs_cpu,
         16 * sizeof(float),
         XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-    ret = xdnn::findmax<float>(ctx.GetRawContext(), new_emb, _cap_l * _cap_e, maxs_xpu);
-    //PADDLE_ENFORCE(ret == xpu::Error_t::SUCCESS, "XPU kernel error!");
+    r = xdnn::findmax<float>(ctx.GetRawContext(), new_emb, cap_l * cap_e, maxs_xpu);
+    CHECK(r == 0);
 
     // precompute embedding to hidden
     for (int i = 0; i < 3; ++i) {
-        const int16_t* data_b = dense_e2h + i * _cap_e * _cap_h; // e2h, e2hr, e2hz
-        float* data_c = buffer_data + i * _cap_l * _cap_h; // w_x_e, wr_x_e, wz_x_e
-        int ret = xdnn::gemm_int16_maxptr<float, int16_t, float>(ctx.GetRawContext(),
+        const int16_t* data_b = dense_e2h + i * cap_e * cap_h; // e2h, e2hr, e2hz
+        float* data_c = buffer_data + i * cap_l * cap_h; // w_x_e, wr_x_e, wz_x_e
+        int r = xdnn::gemm_int16_maxptr<float, int16_t, float>(ctx.GetRawContext(),
                 false, true,                        // trans_a, trans_b
-                _cap_l, _cap_h, _cap_e,             // m, n, k
-                1.0f, new_emb, _cap_e,              // alpha, data_a, lda
-                data_b, _cap_e, 0.0f,               // data_b, ldb, beta
-                data_c, _cap_h,                     // data_c, ldc
+                cap_l, cap_h, cap_e,             // m, n, k
+                1.0f, new_emb, cap_e,              // alpha, data_a, lda
+                data_b, cap_e, 0.0f,               // data_b, ldb, beta
+                data_c, cap_h,                     // data_c, ldc
                 nullptr, xdnn::Activation_t::LINEAR, // bias, act
                 maxs_xpu, maxs_xpu + 4 * (i + 1));  // max_a, max_b
-        //PADDLE_ENFORCE(ret == xpu::Error_t::SUCCESS, "XPU kernel error!");
-        (void)ret;
+        CHECK(r == 0);
     }
 
-    // Call xpu search_grnn
-    ret = xdnn::search_grnn<float, float>(ctx.GetRawContext(),
-            _cap_l, _cap_h, _cap_e,
+    r = xdnn::search_grnn<float, int16_t>(ctx.GetRawContext(),
+            cap_l, cap_h, cap_e,
             max_width, new_offset_xpu,
             buffer_data, dense_h2h, hidden,
             wh_max[0], wh_max[1], wh_max[2]);
-    //PADDLE_ENFORCE(ret == xpu::Error_t::SUCCESS, "XPU kernel error!");
+    CHECK(r == 0);
 
-    // copy back to top
-    ret = xdnn::search_batch2seq(ctx.GetRawContext(),
-            batch, max_width, _cap_h,
-            _idx_sorted_by_width->data<int>(),
+    r = xdnn::search_batch2seq(ctx.GetRawContext(),
+            batch, max_width, cap_h,
+            idx_sorted_by_width->data<int>(),
             offset_xpu, new_offset_xpu,
             hidden, top_hidden);
-    //PADDLE_ENFORCE(ret == xpu::Error_t::SUCCESS, "XPU kernel error!");
-
-    //std::free(offset_cpu);
-    //std::free(new_offset_cpu);
-
+    CHECK(r == 0);
 }
 
 }  // namespace xpu

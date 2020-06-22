@@ -15,7 +15,7 @@
 #pragma once
 
 #include "lite/core/kernel.h"
-#include "lite/backends/xpu/target_wrapper.h"
+#include "lite/backends/xpu/target_wrapper.h" // XPUScratchPadGuard
 
 namespace paddle {
 namespace lite {

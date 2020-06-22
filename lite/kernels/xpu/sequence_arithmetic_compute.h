@@ -16,7 +16,6 @@
 
 #include <memory>
 #include "lite/core/kernel.h"
-#include "lite/kernels/xpu/utils.h"  // XPUFreeDeleter
 
 namespace paddle {
 namespace lite {

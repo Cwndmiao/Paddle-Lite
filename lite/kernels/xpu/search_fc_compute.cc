@@ -33,16 +33,13 @@ void SearchFcCompute::Run() {
   auto* w = param.W;
   auto* b = param.b;
   auto* top = param.Out;
-
-  float max_w = param.max_w;
+  float w_max = param.w_max;
   int out_size = param.out_size;
   bool fuse_relu = param.fuse_relu;
   bool float_to_fix = param.float_to_fix;
-
   CHECK(float_to_fix) << "W should be fixed point";
 
   int batch = bottom->dims()[0];
-
   int _out = w->dims()[0];
   int _in = w->dims()[1];
 
@@ -55,20 +52,20 @@ void SearchFcCompute::Run() {
   top->Resize(top_dims);
 
   const auto* bottom_data = bottom->data<float>();
-  auto* top_data = top->mutable_data<float>(TARGET(kXPU));
   const auto* weights = w->data<int16_t>();
-  const float* bias_data = b->data<float>();
+  const auto* bias_data = b->data<float>();
+  auto* top_data = top->mutable_data<float>(TARGET(kXPU));
 
   float* maxs_xpu = (float*)maxs_xpu_guard_->addr_;
-  float maxs_cpu[8] = {0.0f, 0.0f, 0.0f, 0.0f, max_w, 0.0f, 0.0f, 0.0f};
+  float maxs_cpu[8] = {0.0f, 0.0f, 0.0f, 0.0f, w_max, 0.0f, 0.0f, 0.0f};
   xpu_memcpy(maxs_xpu,
       &maxs_cpu[0],
       8 * sizeof(float),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
+
   int r = xdnn::findmax<float>(ctx.GetRawContext(), bottom_data, batch * _in, maxs_xpu);
   CHECK_EQ(r, 0);
-
-  r = xdnn::gemm_int16_maxptr<float, int16_t, float>(ctx.GetRawContext(),
+  r = xdnn::gemm_int16_maxptr<float, int16_t, float>(ctx.GetRawContext(), /* ctx */
           false, true, /*trans_a, trans_b*/
           batch, _out, _in, /*m, n, k*/
           1.0f, bottom_data, _in, /*alpha, data_a, lda*/

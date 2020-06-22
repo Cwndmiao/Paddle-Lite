@@ -14,7 +14,6 @@
 
 #include "lite/kernels/xpu/match_matrix_tensor_compute.h"
 #include "lite/backends/xpu/xpu_header_sitter.h"
-#include "lite/backends/xpu/debug.h"
 #include "lite/core/op_registry.h"
 
 namespace paddle {
@@ -40,13 +39,10 @@ void MatchMatrixTensorCompute::Run() {
   auto* w = param.w;
   auto* out = param.out;
   auto* tmp = param.tmp;
-
   int dim_t = param.dim_t;
-  float max_w = param.max_w;
-
+  float w_max = param.w_max;
   bool fuse_relu = param.fuse_relu;
   bool float_to_fix = param.float_to_fix;
-
   CHECK(float_to_fix) << "W should be fixed point";
 
   xdnn::Activation_t act = xdnn::Activation_t::LINEAR;
@@ -55,7 +51,6 @@ void MatchMatrixTensorCompute::Run() {
   }
 
   int dim_in = x->dims()[1];
-
   const auto& offset_l = x->lod()[0];
   const auto& offset_r = y->lod()[0];
 
@@ -70,39 +65,26 @@ void MatchMatrixTensorCompute::Run() {
   }
   auto* bottom_l_data = x->data<float>();
   auto* bottom_r_data = y->data<float>();
-  auto* t_data = w->data<int16_t>();
+  auto* w_data = w->data<int16_t>();
   auto* out_data = out->mutable_data<float>(TARGET(kXPU));
-
   auto* bottom_l_trans_data = tmp->mutable_data<float>(TARGET(kXPU));
-
-  //auto& dev_ctx = ctx.template device_context<DeviceContext>();
+  int batch_size = x->lod()[0].size() - 1;
 
   float* wx_max = (float*)wx_max_xpu_guard_->addr_;
   int* offset_l_xpu = (int*)offset_l_xpu_guard_->addr_;
   int* offset_r_xpu = (int*)offset_r_xpu_guard_->addr_;
-  //float* wx_max = (float*) xdnn::alloc_workspace(dev_ctx.x_context(), 4 * sizeof(float));
-  //int* offset_l_xpu = (int*) xdnn::alloc_workspace(dev_ctx.x_context(), offset_l.size() * sizeof(int));
-  //int* offset_r_xpu = (int*) xdnn::alloc_workspace(dev_ctx.x_context(), offset_r.size() * sizeof(int));
-  //PADDLE_ENFORCE(wx_max != nullptr, "Fail to alloc L3");
-  //PADDLE_ENFORCE(offset_l_xpu != nullptr, "Fail to alloc L3");
-  //PADDLE_ENFORCE(offset_r_xpu != nullptr, "Fail to alloc L3");
 
-  int r = xdnn::gemm_int16_tmp_api<float, int16_t, float>(ctx.GetRawContext(),
-          false, false, /*trans_a, trans_b*/
-          x->dims()[0], dim_t * dim_in, dim_in, /*m, n, k*/
-          1.0f, bottom_l_data, dim_in, /*alpha, data_a, lda*/
-          t_data, dim_t * dim_in, 0.0f, /*data_b, ldb, beta*/
-          bottom_l_trans_data, dim_t * dim_in, /* data_c, ldc*/
-          nullptr, /*bias*/
+  int r = xdnn::gemm_int16_tmp_api<float, int16_t, float>(ctx.GetRawContext(), /* ctx */
+          false, false, /* trans_a, trans_b */
+          x->dims()[0], dim_t * dim_in, dim_in, /* m, n, k */
+          1.0f, bottom_l_data, dim_in, /* alpha, data_a, lda */
+          w_data, dim_t * dim_in, 0.0f, /* data_b, ldb, beta */
+          bottom_l_trans_data, dim_t * dim_in, /* data_c, ldc */
+          nullptr, /* bias */
           xdnn::Activation_t::LINEAR,
-          0.0f, max_w, wx_max /*max_a, max_b, max_c*/);
+          0.0f, w_max, wx_max /* max_a, max_b, max_c */);
   CHECK(r == 0);
-  paddle::lite::xpu::dump_xpu_mem(bottom_l_trans_data, x->dims()[0] * dim_t * dim_in, "xw", x->dims()[0] * dim_t * dim_in);
 
-  int batch_size = x->lod()[0].size() - 1;
-
-  //std::unique_ptr<int[]> offset_l_cpu(new int[offset_l.size()]);
-  //std::unique_ptr<int[]> offset_r_cpu(new int[offset_r.size()]);
   int max_width = 0;
   for (int i = 0; i < offset_l.size(); ++i) {
       offset_l_cpu[i] = offset_l[i];
@@ -124,14 +106,6 @@ void MatchMatrixTensorCompute::Run() {
       offset_r_cpu.get(),
       offset_r.size() * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-  //memory::Copy(boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-          //(void*)offset_l_xpu,
-          //platform::CPUPlace(), (void*)offset_l_cpu,
-          //offset_l.size() * sizeof(int));
-  //memory::Copy(boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-          //(void*)offset_r_xpu,
-          //platform::CPUPlace(), (void*)offset_r_cpu,
-          //offset_r.size() * sizeof(int));
 
   r = xdnn::match_matrix_tensor(ctx.GetRawContext(),
           batch_size, bottom_l_trans_data, bottom_r_data,
@@ -160,17 +134,10 @@ void MatchMatrixTensorCompute::Run() {
   }
 
   paddle::lite::LoD out_lod;
-  // out_lod.push_back(out_lod0);
-  // out_lod.push_back(out_lod1);
-  // out_lod.push_back(out_lod2);
   out_lod.push_back(top_offset);
   out_lod.push_back(offset_l);
   out_lod.push_back(offset_r);
   out->set_lod(out_lod);
-
-  paddle::lite::xpu::dump_xpu_mem(x->data<float>(), x->numel(), "left", x->numel());
-  paddle::lite::xpu::dump_xpu_mem(y->data<float>(), y->numel(), "right", y->numel());
-  paddle::lite::xpu::dump_xpu_mem(out_data, out->numel(), "xwy_out", out->numel());
 }
 
 }  // namespace xpu

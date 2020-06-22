@@ -15,16 +15,16 @@
 #pragma once
 
 #include "lite/core/kernel.h"
-#include "lite/backends/xpu/target_wrapper.h"
+#include "lite/backends/xpu/target_wrapper.h" // XPUScratchPadGuard
 
 namespace paddle {
 namespace lite {
 namespace kernels {
 namespace xpu {
 
-class XPUSearchAttentionCompute : public KernelLite<TARGET(kXPU), PRECISION(kFloat)> {
+class XPUMMDNNSearchAttentionCompute : public KernelLite<TARGET(kXPU), PRECISION(kFloat)> {
  public:
-  using param_t = operators::XPUSearchAttentionParam;
+  using param_t = operators::XPUMMDNNSearchAttentionParam;
 
   void PrepareForRun() override;
 

@@ -40,9 +40,9 @@ void SequenceReverseCompute<T, PType>::Run() {
   size_t ele_cnt_in_4_byte = limit / x->dims()[0];
   auto* x_data = x->template data<T>();
   auto* y_data = y->template mutable_data<T>(TARGET(kXPU));
+  int batch_size = lod.size() - 1;
 
   if (std::is_same<T, uint8_t>::value) {
-      //PADDLE_ENFORCE(ele_cnt_in_4_byte % 4 == 0, "ele_cnt_in_4_byte % 4 != 0");
       ele_cnt_in_4_byte /= 4;
   } else if (std::is_same<T, int>::value) {
       // remain the same
@@ -54,19 +54,17 @@ void SequenceReverseCompute<T, PType>::Run() {
       ele_cnt_in_4_byte *= 2;
   }
 
-  int batch_size = lod.size() - 1;
-
-  //std::unique_ptr<int[]> lod_cpu(new int[lod.size()]);
   for (size_t i = 0; i < lod.size(); ++i) {
     lod_cpu[i] = lod[i];
   }
   int* lod_xpu = (int*)lod_xpu_guard_->addr_;
   xpu_memcpy(lod_xpu, lod_cpu.get(), lod.size() * sizeof(int), XPUMemcpyKind::XPU_HOST_TO_DEVICE);
 
-  xdnn::sequence_reverse(ctx.GetRawContext(),
-      batch_size, (const int*)lod_xpu,
+  int r = xdnn::sequence_reverse(ctx.GetRawContext(),
+      batch_size, lod_xpu,
       ele_cnt_in_4_byte,
       (const float*)x_data, (float*)y_data);
+  CHECK(r == 0);
 }
 
 }  // namespace xpu

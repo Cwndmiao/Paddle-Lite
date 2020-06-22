@@ -13,7 +13,7 @@
 // limitations under the License.
 
 #include "lite/backends/xpu/target_wrapper.h"
-#include "lite/core/context.h"  // TargetWrapperXPU
+#include "lite/core/context.h"  // XPUContext
 
 namespace paddle {
 namespace lite {
@@ -45,8 +45,7 @@ void TargetWrapperXPU::MemcpySync(void* dst,
 XPUScratchPadGuard TargetWrapperXPU::MallocScratchPad(size_t size, bool use_l3) {
   void* ptr{nullptr};
   if (use_l3) {
-    //ptr = xdnn::alloc_workspace(XPUContext::GetRawContext(), size);
-    ptr = TargetWrapperXPU::Malloc(size);
+    ptr = xdnn::alloc_workspace(XPUContext::GetRawContext(), size);
   } else {
     ptr = TargetWrapperXPU::Malloc(size);
   }

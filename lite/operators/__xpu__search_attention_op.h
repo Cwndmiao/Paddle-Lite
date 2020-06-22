@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #pragma once
+
 #include <string>
 #include "lite/core/op_lite.h"
 
@@ -20,11 +21,11 @@ namespace paddle {
 namespace lite {
 namespace operators {
 
-class XPUSearchAttentionOp : public OpLite {
+class XPUMMDNNSearchAttentionOp : public OpLite {
  public:
-  XPUSearchAttentionOp() {}
+  XPUMMDNNSearchAttentionOp() {}
 
-  explicit XPUSearchAttentionOp(const std::string &op_type)
+  explicit XPUMMDNNSearchAttentionOp(const std::string &op_type)
       : OpLite(op_type) {}
 
   bool CheckShape() const override;
@@ -35,10 +36,10 @@ class XPUSearchAttentionOp : public OpLite {
 
   void AttachKernel(KernelBase *kernel) override { kernel->SetParam(param_); }
 
-  std::string DebugString() const override { return "XPUSearchAttentionOp"; }
+  std::string DebugString() const override { return "XPUMMDNNSearchAttentionOp"; }
 
  private:
-  mutable XPUSearchAttentionParam param_;
+  mutable XPUMMDNNSearchAttentionParam param_;
 };
 
 }  // namespace operators

@@ -42,13 +42,13 @@ void SequenceTopkAvgPoolingCompute::Run() {
   auto topks = param.topks;
   auto k_num = topks.size();
   auto max_k = topks[topks.size() - 1];
-  std::vector<int64_t> vec_pos_shape;
   auto in_lod = in->lod()[0];
 
   auto row_lod = row->lod()[0];
   auto col_lod = col->lod()[0];
   int batch_size = row_lod.size() - 1;
   int pos_total_size = row_lod[batch_size] * channel_num * max_k;
+  std::vector<int64_t> vec_pos_shape;
   vec_pos_shape.push_back(pos_total_size);
   pos->Resize(vec_pos_shape);
   auto pos_data = pos->mutable_data<int>(TARGET(kXPU));
@@ -60,7 +60,6 @@ void SequenceTopkAvgPoolingCompute::Run() {
     offset = row_lod[i];
     vec_out_lod.push_back(offset);
   }
-
   LoD lod_temp;
   lod_temp.push_back(vec_out_lod);
   out->set_lod(lod_temp);
@@ -68,29 +67,10 @@ void SequenceTopkAvgPoolingCompute::Run() {
   auto in_data = in->data<float>();
   auto out_data = out->mutable_data<float>(TARGET(kXPU));
 
-  //auto& dev_ctx = context.template device_context<DeviceContext>();
-
-  int* in_lod_xpu = nullptr;
-  int* row_lod_xpu = nullptr;
-  int* col_lod_xpu = nullptr;
-  int* topks_xpu = nullptr;
-  //int total_l3_size = (in_lod.size() + row_lod.size() + col_lod.size() + topks.size());
-  //in_lod_xpu = (int*) xpu::alloc_workspace(dev_ctx.x_context(), total_l3_size * sizeof(int));
-  //PADDLE_ENFORCE(in_lod_xpu != nullptr, "Fail to alloc L3");
-  //row_lod_xpu = &in_lod_xpu[in_lod.size()];
-  //col_lod_xpu = &row_lod_xpu[row_lod.size()];
-  //topks_xpu = &col_lod_xpu[col_lod.size()];
-  in_lod_xpu = (int*)lod_xpu_guard_->addr_;
-  row_lod_xpu = in_lod_xpu + in_lod.size();
-  col_lod_xpu = row_lod_xpu + row_lod.size();
-  topks_xpu = col_lod_xpu + col_lod.size();
-
-  //std::unique_ptr<int[]> in_lod_cpu(new int[in_lod.size()]);
-  //std::unique_ptr<int[]> row_lod_cpu(new int[row_lod.size()]);
-  //std::unique_ptr<int[]> col_lod_cpu(new int[col_lod.size()]);
-  //int* in_lod_cpu = (int*)malloc(in_lod.size() * sizeof(int));
-  //int* row_lod_cpu = (int*)malloc(row_lod.size() * sizeof(int));
-  //int* col_lod_cpu = (int*)malloc(col_lod.size() * sizeof(int));
+  int* in_lod_xpu = (int*)lod_xpu_guard_->addr_;
+  int* row_lod_xpu = in_lod_xpu + in_lod.size();
+  int* col_lod_xpu = row_lod_xpu + row_lod.size();
+  int* topks_xpu = col_lod_xpu + col_lod.size();
   for (int i = 0; i < in_lod.size(); ++i) {
       in_lod_cpu[i] = in_lod[i];
   }
@@ -116,33 +96,12 @@ void SequenceTopkAvgPoolingCompute::Run() {
       topks.data(),
       topks.size() * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-  //memory::Copy(
-          //boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-          //(void*)in_lod_xpu,
-          //platform::CPUPlace(), (void*)in_lod_cpu,
-          //in_lod.size() * sizeof(int));
-  //memory::Copy(
-          //boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-          //(void*)row_lod_xpu,
-          //platform::CPUPlace(), (void*)row_lod_cpu,
-          //row_lod.size() * sizeof(int));
-  //memory::Copy(
-          //boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-          //(void*)col_lod_xpu,
-          //platform::CPUPlace(), (void*)col_lod_cpu,
-          //col_lod.size() * sizeof(int));
-  //memory::Copy(
-          //boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-          //(void*)topks_xpu,
-          //platform::CPUPlace(), (void*)topks.data(),
-          //topks.size() * sizeof(int));
 
-  int ret = xdnn::sequence_topk_avg_pooling(ctx.GetRawContext(),
+  int r = xdnn::sequence_topk_avg_pooling(ctx.GetRawContext(),
           in_data, out_data, pos_data,
           batch_size, channel_num, in_lod_xpu, row_lod_xpu, col_lod_xpu,
           topks_xpu, k_num);
-  CHECK(ret == 0);
-  //PADDLE_ENFORCE(ret == xpu::Error_t::SUCCESS, "XPU kernel error!");
+  CHECK(r == 0);
 }
 
 }  // namespace xpu

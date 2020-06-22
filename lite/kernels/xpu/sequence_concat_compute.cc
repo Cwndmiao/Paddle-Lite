@@ -14,7 +14,6 @@
 
 #include "lite/kernels/xpu/sequence_concat_compute.h"
 #include "lite/backends/xpu/xpu_header_sitter.h"
-#include "lite/backends/xpu/debug.h"
 #include "lite/core/op_registry.h"
 
 namespace paddle {
@@ -87,36 +86,19 @@ void SequenceConcatCompute::Run() {
           << "Inputs of sequence concat must have same feature size";
     }
   }
-  //if (dim0 < 0) {
-    //dim0 = -1;  // Normalize batch size for compile time.
-  //}
   out_dims[0] = dim0;
-  param.Out->Resize(out_dims);
-
+  out->Resize(out_dims);
   std::vector<lite::Tensor> x_in_order;
   out->set_lod(ConcatLoD<float>(xs, &x_in_order));
-  //out->mutable_data<float>(TARGET(kXPU));
 
   CHECK(xs.size() == 2) << "XPU only support sequence_pool for 2 tensors";
 
   auto lod0 = xs[0]->lod()[0];
   auto lod1 = xs[1]->lod()[0];
-
   int batch_size = lod0.size() - 1;
 
   int* lod0_xpu = (int*)lod0_xpu_guard_->addr_;
   int* lod1_xpu = (int*)lod1_xpu_guard_->addr_;
-  //int* lod0_xpu = nullptr;
-  //int* lod1_xpu = nullptr;
-  //lod0_xpu = (int*) xpu::alloc_workspace(dev_ctx.x_context(), lod0.size() * sizeof(int));
-  //lod1_xpu = (int*) xpu::alloc_workspace(dev_ctx.x_context(), lod1.size() * sizeof(int));
-  //PADDLE_ENFORCE(lod0_xpu != nullptr, "Fail to alloc L3");
-  //PADDLE_ENFORCE(lod1_xpu != nullptr, "Fail to alloc L3");
-
-  //std::unique_ptr<int[]> lod0_cpu(new int[lod0.size()]);
-  //std::unique_ptr<int[]> lod1_cpu(new int[lod1.size()]);
-  //int* lod0_cpu = (int*)malloc(lod0.size() * sizeof(int));
-  //int* lod1_cpu = (int*)malloc(lod1.size() * sizeof(int));
   for (int i = 0; i < lod0.size(); ++i) {
       lod0_cpu[i] = lod0[i];
   }
@@ -131,27 +113,12 @@ void SequenceConcatCompute::Run() {
       lod1_cpu.get(),
       lod1.size() * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
-  //memory::Copy(
-          //boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-          //(void*)lod0_xpu,
-          //platform::CPUPlace(), (void*)lod0_cpu,
-          //lod0.size() * sizeof(int));
-  //memory::Copy(
-          //boost::get<platform::XPUPlace>(dev_ctx.GetPlace()),
-          //(void*)lod1_xpu,
-          //platform::CPUPlace(), (void*)lod1_cpu,
-          //lod1.size() * sizeof(int));
 
-  int ret = xdnn::sequence_concat(ctx.GetRawContext(),
+  int r = xdnn::sequence_concat(ctx.GetRawContext(),
           xs[0]->data<float>(), lod0_xpu,
           xs[1]->data<float>(), lod1_xpu,
           out->mutable_data<float>(TARGET(kXPU)), batch_size);
-  CHECK(ret == 0);
-  //PADDLE_ENFORCE(ret == xpu::Error_t::SUCCESS, "XPU kernel error!");
-
-  //paddle::lite::xpu::dump_xpu_mem(out->data<float>(),
-      //out->numel(),
-      //"seq_concat top", 1, 20);
+  CHECK(r == 0);
 }
 
 }  // namespace xpu

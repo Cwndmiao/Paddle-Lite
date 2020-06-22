@@ -14,8 +14,9 @@
 
 #pragma once
 
+#include <memory>
 #include "lite/core/kernel.h"
-#include "lite/backends/xpu/target_wrapper.h"
+#include "lite/backends/xpu/target_wrapper.h" // XPUScratchPadGuard
 
 namespace paddle {
 namespace lite {
@@ -28,8 +29,8 @@ class SearchGrnnCompute : public KernelLite<TARGET(kXPU), PRECISION(kFloat)> {
 
   void PrepareForRun() override;
 
-  void xpu_prepare_layout(const operators::SearchGrnnParam& ctx,
-                      const paddle::lite::Tensor* input_blob) const;
+  void prepare_layout(const operators::SearchGrnnParam& param,
+                      const paddle::lite::Tensor* bottom);
   void Run() override;
 
  private:

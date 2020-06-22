@@ -115,7 +115,7 @@ public:
                 if (split2.size() == 0) {
                     split2.push_back("1280000");
                 }
-                for (int j = 0; j < split2.size(); j++) {
+                for (size_t j = 0; j < split2.size(); j++) {
                     data[i - 1].push_back(std::stoi(split2[j].c_str(), nullptr, 0));
                 }
                 //if (i % 2 == 1) {
@@ -144,7 +144,6 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
     mmdnn_reader reader;
     reader.init(FLAGS_perf_input);
     int UB_batch = 40;      //  upper bound of batch
-    //int curr = 0;
     int iter = 0;
     double tsc_sum = 0;
 
@@ -153,7 +152,6 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
       if (batch <= 0) {
         break;
       }
-      //curr += batch;
       ++iter;
       for (int i = 0; i < 6; ++i) {
         auto input_x = predictor->GetInput(i);
@@ -178,13 +176,6 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
   }
 
   parse_input();
-
-  //int batch_size=32;
-  //std::vector<int64_t> input_shape{batch_size, 1};
-  //int input_num = 1;
-  //for (size_t i = 0; i < input_shape.size(); ++i) {
-    //input_num *= input_shape[i];
-  //}
 
   {
     std::vector<int64_t> input0_shape{(int64_t)input0.size(), 1};
@@ -245,11 +236,11 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
   }
 
   auto out = predictor->GetOutput(0);
-  LOG(INFO) << "out=" << out->data<float>()[0];
-  LOG(INFO) << "out=" << out->data<float>()[1];
-  LOG(INFO) << "out=" << out->data<float>()[2];
-  LOG(INFO) << "out=" << out->data<float>()[3];
-  LOG(INFO) << "out=" << out->data<float>()[4];
+  auto out_shape = out->shape();
+  auto out_size = std::accumulate(out_shape.begin(), out_shape.end(), 1, std::multiplies<int64_t>());
+  for (int i = 0; i < out_size; ++i) {
+    LOG(INFO) << "out[" << i << "] = " << out->data<float>()[i];
+  }
 
   LOG(INFO) << "================== Speed Report ===================";
   LOG(INFO) << "Model: " << FLAGS_model_dir << ", threads num " << FLAGS_threads

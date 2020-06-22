@@ -39,6 +39,5 @@ else()
   add_kernel(__xpu__fc_compute_xpu XPU extra SRCS __xpu__fc_compute.cc DEPS ${lite_kernel_deps})
   add_kernel(__xpu__resnet_cbam_compute_xpu XPU extra SRCS __xpu__resnet_cbam_compute.cc DEPS ${lite_kernel_deps})
   add_kernel(__xpu__search_attention_compute_xpu XPU extra SRCS __xpu__search_attention_compute.cc DEPS ${lite_kernel_deps})
-  add_kernel(__xpu__bid_emb_grnn_att_compute_xpu XPU extra SRCS
-    __xpu__bid_emb_grnn_att_compute.cc DEPS ${lite_kernel_deps})
+  add_kernel(__xpu__mmdnn_compute_xpu XPU extra SRCS __xpu__mmdnn_compute.cc DEPS ${lite_kernel_deps})
 endif()

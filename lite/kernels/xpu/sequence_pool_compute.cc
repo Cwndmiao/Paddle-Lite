@@ -32,16 +32,15 @@ void XPUSequencePoolCompute::Run() {
 
   auto* in = param.X;
   auto* out = param.Out;
-  std::string pooltype = param.pool_type;
+  std::string pool_type_str = param.pool_type;
 
   auto dims = in->dims();
   auto lod = in->lod();
   dims[0] = lod[0].size() - 1;
 
   xdnn::Pooling_t pool_type = xdnn::Pooling_t::MAX_WITHOUT_INDEX;
-  if (pooltype == "MAX") {
-
-  } else if (pooltype == "LAST") {
+  if (pool_type_str == "MAX") {
+  } else if (pool_type_str == "LAST") {
     pool_type = xdnn::Pooling_t::LAST;
   } else {
     CHECK(false);
@@ -51,7 +50,6 @@ void XPUSequencePoolCompute::Run() {
   int dim = out->numel() / num_seq;
 
   auto in_lod = in->lod()[0];
-  //std::unique_ptr<int[]> lod_cpu(new int[in_lod.size()]);
   for (size_t i = 0; i < in_lod.size(); ++i) {
     lod_cpu[i] = in_lod[i];
   }
@@ -61,9 +59,10 @@ void XPUSequencePoolCompute::Run() {
       in_lod.size() * sizeof(int),
       XPUMemcpyKind::XPU_HOST_TO_DEVICE);
 
-  xdnn::sequence_pooling_forward(ctx.GetRawContext(),
-      pool_type, num_seq, (const int *)lod_xpu, dim, in->data<float>(), nullptr /* index */,
+  int r = xdnn::sequence_pooling_forward(ctx.GetRawContext(),
+      pool_type, num_seq, lod_xpu, dim, in->data<float>(), nullptr /* index */,
       out->mutable_data<float>(TARGET(kXPU)));
+  CHECK(r == 0);
 }
 
 }  // namespace xpu

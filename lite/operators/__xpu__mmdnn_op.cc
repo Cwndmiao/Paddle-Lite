@@ -12,27 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "lite/operators/__xpu__bid_emb_grnn_att_op.h"
+#include "lite/operators/__xpu__mmdnn_op.h"
 #include "lite/core/op_registry.h"
 
 namespace paddle {
 namespace lite {
 namespace operators {
 
-bool XPUBidEmbGrnnAttOp::CheckShape() const {
+bool XPUMMDNNBidEmbGrnnAttOp::CheckShape() const {
   return true;
 }
 
-bool XPUBidEmbGrnnAttOp::InferShapeImpl() const {
+bool XPUMMDNNBidEmbGrnnAttOp::InferShapeImpl() const {
   auto& id_dims = param_.id0->dims();
   auto& id_lod = param_.id0->lod()[0];
   auto& emb_tbl_dims = param_.emb_tbl->dims();
-  auto& grnn_wh_dims = param_.rv_grnn_wh->dims();
+  auto& grnn_wh_dims = param_.grnn_rv_wh->dims();
 
-  param_.fw_grnn_pool_out->Resize({(int64_t)id_lod.size() - 1, grnn_wh_dims[2]});
-  param_.rv_grnn_pool_out->Resize({(int64_t)id_lod.size() - 1, grnn_wh_dims[2]});
+  param_.grnn_fw_pool_out->Resize({(int64_t)id_lod.size() - 1, grnn_wh_dims[2]});
+  param_.grnn_rv_pool_out->Resize({(int64_t)id_lod.size() - 1, grnn_wh_dims[2]});
   param_.att_pool_out->Resize({(int64_t)id_lod.size() - 1, 2 * grnn_wh_dims[2]});
-  //param_.concat_3in1_out->Resize({(int64_t)id_lod.size() - 1, 3 * grnn_wh_dims[2]});
   param_.concat_3in1_out->Resize({id_dims[0], 3 * grnn_wh_dims[2]});
   param_.concat_3in1_out->set_lod({id_lod});
   param_.emb_fw_out->Resize({id_dims[0], emb_tbl_dims[1]});
@@ -40,7 +39,7 @@ bool XPUBidEmbGrnnAttOp::InferShapeImpl() const {
   return true;
 }
 
-bool XPUBidEmbGrnnAttOp::AttachImpl(const cpp::OpDesc& op_desc,
+bool XPUMMDNNBidEmbGrnnAttOp::AttachImpl(const cpp::OpDesc& op_desc,
                                               lite::Scope* scope) {
   param_.id0 = scope->FindVar(op_desc.Input("id0").front())
                    ->GetMutable<lite::Tensor>();
@@ -48,22 +47,22 @@ bool XPUBidEmbGrnnAttOp::AttachImpl(const cpp::OpDesc& op_desc,
                    ->GetMutable<lite::Tensor>();
   param_.emb_tbl = scope->FindVar(op_desc.Input("emb_tbl").front())
                    ->GetMutable<lite::Tensor>();
-  param_.fw_grnn_wh = scope->FindVar(op_desc.Input("fw_grnn_wh").front())
+  param_.grnn_fw_wh = scope->FindVar(op_desc.Input("grnn_fw_wh").front())
                    ->GetMutable<lite::Tensor>();
-  param_.fw_grnn_wi = scope->FindVar(op_desc.Input("fw_grnn_wi").front())
+  param_.grnn_fw_wi = scope->FindVar(op_desc.Input("grnn_fw_wi").front())
                    ->GetMutable<lite::Tensor>();
-  param_.rv_grnn_wh = scope->FindVar(op_desc.Input("rv_grnn_wh").front())
+  param_.grnn_rv_wh = scope->FindVar(op_desc.Input("grnn_rv_wh").front())
                    ->GetMutable<lite::Tensor>();
-  param_.rv_grnn_wi = scope->FindVar(op_desc.Input("rv_grnn_wi").front())
+  param_.grnn_rv_wi = scope->FindVar(op_desc.Input("grnn_rv_wi").front())
                    ->GetMutable<lite::Tensor>();
   param_.att_fc_w = scope->FindVar(op_desc.Input("att_fc_w").front())
                    ->GetMutable<lite::Tensor>();
   param_.att_fc_b = scope->FindVar(op_desc.Input("att_fc_b").front())
                    ->GetMutable<lite::Tensor>();
 
-  param_.fw_grnn_pool_out = scope->FindVar(op_desc.Output("fw_grnn_pool_out").front())
+  param_.grnn_fw_pool_out = scope->FindVar(op_desc.Output("grnn_fw_pool_out").front())
                    ->GetMutable<lite::Tensor>();
-  param_.rv_grnn_pool_out = scope->FindVar(op_desc.Output("rv_grnn_pool_out").front())
+  param_.grnn_rv_pool_out = scope->FindVar(op_desc.Output("grnn_rv_pool_out").front())
                    ->GetMutable<lite::Tensor>();
   param_.att_pool_out = scope->FindVar(op_desc.Output("att_pool_out").front())
                    ->GetMutable<lite::Tensor>();
@@ -72,19 +71,19 @@ bool XPUBidEmbGrnnAttOp::AttachImpl(const cpp::OpDesc& op_desc,
   param_.emb_fw_out = scope->FindVar(op_desc.Output("emb_fw_out").front())
                    ->GetMutable<lite::Tensor>();
 
-  param_.fw_grnn_wh_maxs = op_desc.GetAttr<std::vector<float>>("fw_grnn_wh_maxs");
-  param_.fw_grnn_wi_maxs = op_desc.GetAttr<std::vector<float>>("fw_grnn_wi_maxs");
-  param_.rv_grnn_wh_maxs = op_desc.GetAttr<std::vector<float>>("rv_grnn_wh_maxs");
-  param_.rv_grnn_wi_maxs = op_desc.GetAttr<std::vector<float>>("rv_grnn_wi_maxs");
+  param_.grnn_fw_wh_maxs = op_desc.GetAttr<std::vector<float>>("grnn_fw_wh_maxs");
+  param_.grnn_fw_wi_maxs = op_desc.GetAttr<std::vector<float>>("grnn_fw_wi_maxs");
+  param_.grnn_rv_wh_maxs = op_desc.GetAttr<std::vector<float>>("grnn_rv_wh_maxs");
+  param_.grnn_rv_wi_maxs = op_desc.GetAttr<std::vector<float>>("grnn_rv_wi_maxs");
   param_.att_fc_w_max = op_desc.GetAttr<float>("att_fc_w_max");
   return true;
 }
 
-bool XPUBidEmbAttOp::CheckShape() const {
+bool XPUMMDNNBidEmbAttOp::CheckShape() const {
   return true;
 }
 
-bool XPUBidEmbAttOp::InferShapeImpl() const {
+bool XPUMMDNNBidEmbAttOp::InferShapeImpl() const {
   auto& id_dims = param_.id0->dims();
   auto& id_lod = param_.id0->lod()[0];
   auto& emb_tbl_dims = param_.emb_tbl->dims();
@@ -95,7 +94,7 @@ bool XPUBidEmbAttOp::InferShapeImpl() const {
   return true;
 }
 
-bool XPUBidEmbAttOp::AttachImpl(const cpp::OpDesc& op_desc,
+bool XPUMMDNNBidEmbAttOp::AttachImpl(const cpp::OpDesc& op_desc,
                                               lite::Scope* scope) {
   param_.id0 = scope->FindVar(op_desc.Input("id0").front())
                    ->GetMutable<lite::Tensor>();
@@ -117,11 +116,11 @@ bool XPUBidEmbAttOp::AttachImpl(const cpp::OpDesc& op_desc,
   return true;
 }
 
-bool XPUMatchConvTopkOp::CheckShape() const {
+bool XPUMMDNNMatchConvTopkOp::CheckShape() const {
   return true;
 }
 
-bool XPUMatchConvTopkOp::InferShapeImpl() const {
+bool XPUMMDNNMatchConvTopkOp::InferShapeImpl() const {
   int channel_num = param_.channel_num;
   std::vector<int> topks = param_.topks;
   auto row_dim = param_.input_x->dims();
@@ -136,7 +135,7 @@ bool XPUMatchConvTopkOp::InferShapeImpl() const {
   return true;
 }
 
-bool XPUMatchConvTopkOp::AttachImpl(const cpp::OpDesc& op_desc,
+bool XPUMMDNNMatchConvTopkOp::AttachImpl(const cpp::OpDesc& op_desc,
                                               lite::Scope* scope) {
   param_.input_x = scope->FindVar(op_desc.Input("input_x").front())
                    ->GetMutable<lite::Tensor>();
@@ -223,11 +222,11 @@ bool XPUMMDNNMergeAllOp::AttachImpl(const cpp::OpDesc& op_desc,
 }  // namespace lite
 }  // namespace paddle
 
-REGISTER_LITE_OP(__xpu__bid_emb_grnn_att,
-                 paddle::lite::operators::XPUBidEmbGrnnAttOp);
-REGISTER_LITE_OP(__xpu__bid_emb_att,
-                 paddle::lite::operators::XPUBidEmbAttOp);
-REGISTER_LITE_OP(__xpu__match_conv_topk,
-                 paddle::lite::operators::XPUMatchConvTopkOp);
+REGISTER_LITE_OP(__xpu__mmdnn_bid_emb_grnn_att,
+                 paddle::lite::operators::XPUMMDNNBidEmbGrnnAttOp);
+REGISTER_LITE_OP(__xpu__mmdnn_bid_emb_att,
+                 paddle::lite::operators::XPUMMDNNBidEmbAttOp);
+REGISTER_LITE_OP(__xpu__mmdnn_match_conv_topk,
+                 paddle::lite::operators::XPUMMDNNMatchConvTopkOp);
 REGISTER_LITE_OP(__xpu__mmdnn_merge_all,
                  paddle::lite::operators::XPUMMDNNMergeAllOp);

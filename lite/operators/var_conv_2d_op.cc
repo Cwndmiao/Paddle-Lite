@@ -56,8 +56,8 @@ bool VarConv2dOp::AttachImpl(const cpp::OpDesc &opdesc, lite::Scope *scope) {
   if (opdesc.HasAttr("float_to_fix")) {
     param_.float_to_fix = opdesc.GetAttr<bool>("float_to_fix");
   }
-  if (opdesc.HasAttr("max_w")) {
-    param_.max_w = opdesc.GetAttr<float>("max_w");
+  if (opdesc.HasAttr("w_max")) {
+    param_.w_max = opdesc.GetAttr<float>("w_max");
   }
 #endif
 

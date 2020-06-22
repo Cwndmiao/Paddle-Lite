@@ -19,18 +19,18 @@ namespace paddle {
 namespace lite {
 namespace operators {
 
-bool XPUSearchAttentionOp::CheckShape() const {
+bool XPUMMDNNSearchAttentionOp::CheckShape() const {
   return true;
 }
 
-bool XPUSearchAttentionOp::InferShapeImpl() const {
+bool XPUMMDNNSearchAttentionOp::InferShapeImpl() const {
   auto& x_dims = param_.X->dims();
   param_.Out->Resize(x_dims);
   param_.Out->set_lod(param_.X->lod());
   return true;
 }
 
-bool XPUSearchAttentionOp::AttachImpl(const cpp::OpDesc& op_desc,
+bool XPUMMDNNSearchAttentionOp::AttachImpl(const cpp::OpDesc& op_desc,
                                               lite::Scope* scope) {
   auto x = op_desc.Input("X").front();
   auto w = op_desc.Input("W").front();
@@ -54,5 +54,5 @@ bool XPUSearchAttentionOp::AttachImpl(const cpp::OpDesc& op_desc,
 }  // namespace lite
 }  // namespace paddle
 
-REGISTER_LITE_OP(__xpu__search_attention,
-                 paddle::lite::operators::XPUSearchAttentionOp);
+REGISTER_LITE_OP(__xpu__mmdnn_search_attention,
+                 paddle::lite::operators::XPUMMDNNSearchAttentionOp);
