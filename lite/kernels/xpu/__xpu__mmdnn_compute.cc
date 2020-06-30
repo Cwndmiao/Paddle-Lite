@@ -192,9 +192,20 @@ class fc_op {
       xdnn::findmax<float>(ctx, in, m * k, in_max);
       in_max_by_caller = in_max;
     }
+#if 1
+    xdnn::fc_int16(ctx, false, true,
+        m, n, k,
+        1.0f,
+        in, in_max_by_caller,
+        weight, weight_max,
+        0.0f,
+        out, out_max,
+        bias, act_type);
+#else
     xdnn::gemm_int16_maxptr<float, int16_t, float>(ctx, false, true,
         m, n, k, 1.0f, in, k, weight, k, 0.0f,
         out, n, bias, act_type, in_max_by_caller, weight_max, out_max);
+#endif
   }
 };
 
