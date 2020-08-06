@@ -25,7 +25,7 @@ namespace fusion {
 
 class XPUMmdnnFloat2Fix {
  public:
-  void operator()(SSAGraph* graph) {
+  void operator()(SSAGraph* graph, bool xpu_disable_multi_stream) {
     for (auto* node : graph->StmtTopologicalOrder()) {
       CHECK(node->IsStmt());
       auto* op_info = node->stmt()->op_info();
@@ -84,27 +84,40 @@ class XPUMmdnnFloat2Fix {
                 << ", weight_name=" << weight_name;
       } else if (op_type == "search_grnn") {
         auto* scope = node->stmt()->op()->scope();
-
+        auto update_op_info = *op_info;
+        update_op_info.SetAttr<bool>("__xpu__float_to_fix", true);
+        // weight input
         std::string wi_name = op_info->Input("Wi").front();
         auto* wi_t = scope->FindMutableTensor(wi_name);
         auto wi_dims = wi_t->dims();
         auto wi_len = wi_t->numel();
-        auto wi_stride_len = wi_len / 3;
         float* wi_on_host = wi_t->mutable_data<float>();
         std::unique_ptr<int16_t[]> wi_int16(new int16_t[wi_len]);
-        std::vector<float> wi_max(3);
-        for (int i = 0; i < 3; ++i) {
-          float max_f = paddle::lite::xpu::math::FindMaxAbs(
-              wi_on_host + i * wi_stride_len, wi_stride_len);
+        if (xpu_disable_multi_stream) { // single stream
+          auto wi_stride_len = wi_len / 3;
+          std::vector<float> wi_max(3);
+          for (int i = 0; i < 3; ++i) {
+            float max_f = paddle::lite::xpu::math::FindMaxAbs(
+                wi_on_host + i * wi_stride_len, wi_stride_len);
+            paddle::lite::xpu::math::ConvertFP32ToInt16(
+                wi_on_host + i * wi_stride_len,
+                wi_int16.get() + i * wi_stride_len,
+                max_f,
+                wi_stride_len);
+            wi_max[i] = max_f;
+          }
+          memcpy(wi_on_host, wi_int16.get(), wi_len * sizeof(int16_t));
+          update_op_info.SetAttr<std::vector<float>>("__xpu__wi_max", wi_max);
+        } else { // multi stream
+          std::vector<float> wi_max(1);
+          float max_f = paddle::lite::xpu::math::FindMaxAbs(wi_on_host, wi_len);
           paddle::lite::xpu::math::ConvertFP32ToInt16(
-              wi_on_host + i * wi_stride_len,
-              wi_int16.get() + i * wi_stride_len,
-              max_f,
-              wi_stride_len);
-          wi_max[i] = max_f;
+              wi_on_host, wi_int16.get(), max_f, wi_len);
+          wi_max[0] = max_f;
+          memcpy(wi_on_host, wi_int16.get(), wi_len * sizeof(int16_t));
+          update_op_info.SetAttr<std::vector<float>>("__xpu__wi_max", wi_max);
         }
-        memcpy(wi_on_host, wi_int16.get(), wi_len * sizeof(int16_t));
-
+        // weight hidden
         std::string wh_name = op_info->Input("Wh").front();
         auto* wh_t = scope->FindMutableTensor(wh_name);
         auto wh_dims = wh_t->dims();
@@ -124,13 +137,11 @@ class XPUMmdnnFloat2Fix {
           wh_max[i] = max_f;
         }
         memcpy(wh_on_host, wh_int16.get(), wh_len * sizeof(int16_t));
-
-        auto update_op_info = *op_info;
-        update_op_info.SetAttr<bool>("__xpu__float_to_fix", true);
-        update_op_info.SetAttr<std::vector<float>>("__xpu__wi_max", wi_max);
         update_op_info.SetAttr<std::vector<float>>("__xpu__wh_max", wh_max);
         node->stmt()->ResetOp(update_op_info, graph->valid_places());
-        VLOG(3) << "Float2Fix, op_type=" << op_type << ", wi_name=" << wi_name
+        VLOG(3) << "Float2Fix, op_type=" << op_type
+                << ", xpu_disable_multi_stream=" << xpu_disable_multi_stream
+                << ", wi_name=" << wi_name
                 << ", wh_name=" << wh_name;
       }
     }
@@ -1599,15 +1610,1054 @@ class XPUMmdnnMergeAllFuser : public FuseBase {
   int n_concat_topk_;
 };
 
+void SetInput(cpp::OpDesc& op_desc,
+      const std::map<std::string, Node*>& matched,
+      std::string input_name) {
+  op_desc.SetInput(input_name, {matched.at(input_name)->arg()->name});
+}
+
+void SetAttrInt(const std::map<std::string, Node*>& matched,
+      cpp::OpDesc& dst_op_desc, std::string src_op_name,
+      std::string dst_attr_name, std::string src_attr_name) {
+  auto* src_op_info = matched.at(src_op_name)->stmt()->op_info();
+  dst_op_desc.SetAttr<int>(dst_attr_name, src_op_info->GetAttr<int>(src_attr_name));
+}
+
+void SetAttrVectorInt(const std::map<std::string, Node*>& matched,
+      cpp::OpDesc& dst_op_desc, std::string src_op_name,
+      std::string dst_attr_name, std::string src_attr_name) {
+  auto* src_op_info = matched.at(src_op_name)->stmt()->op_info();
+  dst_op_desc.SetAttr<std::vector<int>>(dst_attr_name,
+      src_op_info->GetAttr<std::vector<int>>(src_attr_name));
+}
+
+void SetAttrFloat(const std::map<std::string, Node*>& matched,
+      cpp::OpDesc& dst_op_desc, std::string src_op_name,
+      std::string dst_attr_name, std::string src_attr_name) {
+  auto* src_op_info = matched.at(src_op_name)->stmt()->op_info();
+  dst_op_desc.SetAttr<float>(dst_attr_name, src_op_info->GetAttr<float>(src_attr_name));
+}
+
+void SetAttrVectorFloat(const std::map<std::string, Node*>& matched,
+      cpp::OpDesc& dst_op_desc, std::string src_op_name,
+      std::string dst_attr_name, std::string src_attr_name) {
+  auto* src_op_info = matched.at(src_op_name)->stmt()->op_info();
+  dst_op_desc.SetAttr<std::vector<float>>(dst_attr_name,
+      src_op_info->GetAttr<std::vector<float>>(src_attr_name));
+}
+
+class XPUMmdnnMultiStreamV1Fuser : public FuseBase {
+ public:
+  void BuildPattern() override {
+    // 6 internal op
+    auto* q_bid_emb_grnn_att =
+        OpNode("q_bid_emb_grnn_att", "__xpu__mmdnn_bid_emb_grnn_att");
+    auto* pt_bid_emb_grnn_att =
+        OpNode("pt_bid_emb_grnn_att", "__xpu__mmdnn_bid_emb_grnn_att")
+            ->AsIntermediate();
+    auto* pa_bid_emb_att =
+        OpNode("pa_bid_emb_att", "__xpu__mmdnn_bid_emb_att")
+            ->AsIntermediate();
+    auto* q_pa_match_conv_topk =
+        OpNode("q_pa_match_conv_topk", "__xpu__mmdnn_match_conv_topk")
+            ->AsIntermediate();
+    auto* q_pt_match_conv_topk =
+        OpNode("q_pt_match_conv_topk", "__xpu__mmdnn_match_conv_topk")
+            ->AsIntermediate();
+    auto* merge_all =
+        OpNode("merge_all", "__xpu__mmdnn_merge_all")
+            ->AsIntermediate();
+    // common input:
+    auto* emb_tbl = VarNode("emb_tbl")->AsInput();
+    // assert
+    // q_bid_emb_grnn_att
+    auto* q_basic =
+        VarNode("q_basic")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "id0")
+            ->AsInput();
+    auto* q_bigram0 =
+        VarNode("q_bigram0")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "id1")
+            ->AsInput();
+    emb_tbl->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "emb_tbl");
+    auto* q_bid_emb_grnn_att_grnn_fw_wh =
+        VarNode("q_bid_emb_grnn_att_grnn_fw_wh")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_fw_wh")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_grnn_fw_wi =
+        VarNode("q_bid_emb_grnn_att_grnn_fw_wi")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_fw_wi")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_grnn_rv_wh =
+        VarNode("q_bid_emb_grnn_att_grnn_rv_wh")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_rv_wh")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_grnn_rv_wi =
+        VarNode("q_bid_emb_grnn_att_grnn_rv_wi")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_rv_wi")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_att_fc_w =
+        VarNode("q_bid_emb_grnn_att_att_fc_w")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "att_fc_w")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_att_fc_b =
+        VarNode("q_bid_emb_grnn_att_att_fc_b")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "att_fc_b")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_grnn_fw_pool_out =
+        VarNode("q_bid_emb_grnn_att_grnn_fw_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "grnn_fw_pool_out")
+            ->AsIntermediate();
+    auto* q_bid_emb_grnn_att_grnn_rv_pool_out =
+        VarNode("q_bid_emb_grnn_att_grnn_rv_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "grnn_rv_pool_out")
+            ->AsIntermediate();
+    auto* q_bid_emb_grnn_att_att_pool_out =
+        VarNode("q_bid_emb_grnn_att_att_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "att_pool_out")
+            ->AsIntermediate();
+    auto* q_bid_emb_grnn_att_concat_3in1_out =
+        VarNode("q_bid_emb_grnn_att_concat_3in1_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "concat_3in1_out")
+            ->AsIntermediate();
+    auto* q_bid_emb_grnn_att_emb_fw_out =
+        VarNode("q_bid_emb_grnn_att_emb_fw_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "emb_fw_out")
+            ->AsIntermediate();
+    // pt_bid_emb_grnn_att
+    auto* pt_basic =
+        VarNode("pt_basic")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "id0")
+            ->AsInput();
+    auto* pt_bigram0 =
+        VarNode("pt_bigram0")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "id1")
+            ->AsInput();
+    emb_tbl->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "emb_tbl");
+    auto* pt_bid_emb_grnn_att_grnn_fw_wh =
+        VarNode("pt_bid_emb_grnn_att_grnn_fw_wh")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_fw_wh")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_grnn_fw_wi =
+        VarNode("pt_bid_emb_grnn_att_grnn_fw_wi")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_fw_wi")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_grnn_rv_wh =
+        VarNode("pt_bid_emb_grnn_att_grnn_rv_wh")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_rv_wh")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_grnn_rv_wi =
+        VarNode("pt_bid_emb_grnn_att_grnn_rv_wi")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_rv_wi")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_att_fc_w =
+        VarNode("pt_bid_emb_grnn_att_att_fc_w")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "att_fc_w")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_att_fc_b =
+        VarNode("pt_bid_emb_grnn_att_att_fc_b")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "att_fc_b")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_grnn_fw_pool_out =
+        VarNode("pt_bid_emb_grnn_att_grnn_fw_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "grnn_fw_pool_out")
+            ->AsIntermediate();
+    auto* pt_bid_emb_grnn_att_grnn_rv_pool_out =
+        VarNode("pt_bid_emb_grnn_att_grnn_rv_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "grnn_rv_pool_out")
+            ->AsIntermediate();
+    auto* pt_bid_emb_grnn_att_att_pool_out =
+        VarNode("pt_bid_emb_grnn_att_att_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "att_pool_out")
+            ->AsIntermediate();
+    auto* pt_bid_emb_grnn_att_concat_3in1_out =
+        VarNode("pt_bid_emb_grnn_att_concat_3in1_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "concat_3in1_out")
+            ->AsIntermediate();
+    auto* pt_bid_emb_grnn_att_emb_fw_out =
+        VarNode("pt_bid_emb_grnn_att_emb_fw_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "emb_fw_out")
+            ->AsIntermediate();
+    // pa_bid_emb_att
+    auto* pa_basic =
+        VarNode("pa_basic")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_att", "id0")
+            ->AsInput();
+    auto* pa_bigram0 =
+        VarNode("pa_bigram0")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_att", "id1")
+            ->AsInput();
+    emb_tbl->assert_is_op_input("__xpu__mmdnn_bid_emb_att", "emb_tbl");
+    auto* pa_bid_emb_att_att_fc_w =
+        VarNode("pa_bid_emb_att_att_fc_w")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_att", "att_fc_w")
+            ->AsInput();
+    auto* pa_bid_emb_att_att_fc_b =
+        VarNode("pa_bid_emb_att_att_fc_b")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_att", "att_fc_b")
+            ->AsInput();
+    auto* pa_bid_emb_att_att_pool_out =
+        VarNode("pa_bid_emb_att_att_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_att", "att_pool_out")
+            ->AsIntermediate();
+    auto* pa_bid_emb_att_emb_fw_out =
+        VarNode("pa_bid_emb_att_emb_fw_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_att", "emb_fw_out")
+            ->AsIntermediate();
+    // q_pa_match_conv_topk
+    q_bid_emb_grnn_att_emb_fw_out->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_x");
+    pa_bid_emb_att_emb_fw_out->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_y");
+    auto* q_pa_match_conv_topk_input_w =
+        VarNode("q_pa_match_conv_topk_input_w")
+            ->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_w")
+            ->AsInput();
+    auto* q_pa_match_conv_topk_conv_w =
+        VarNode("q_pa_match_conv_topk_conv_w")
+            ->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "conv_w")
+            ->AsInput();
+    auto* q_pa_match_conv_topk_topk_out =
+        VarNode("q_pa_match_conv_topk_topk_out")
+            ->assert_is_op_output("__xpu__mmdnn_match_conv_topk", "topk_out")
+            ->AsIntermediate();
+    // q_pt_match_conv_topk
+    q_bid_emb_grnn_att_concat_3in1_out->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_x");
+    pt_bid_emb_grnn_att_concat_3in1_out->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_y");
+    auto* q_pt_match_conv_topk_input_w =
+        VarNode("q_pt_match_conv_topk_input_w")
+            ->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_w")
+            ->AsInput();
+    auto* q_pt_match_conv_topk_conv_w =
+        VarNode("q_pt_match_conv_topk_conv_w")
+            ->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "conv_w")
+            ->AsInput();
+    auto* q_pt_match_conv_topk_topk_out =
+        VarNode("q_pt_match_conv_topk_topk_out")
+            ->assert_is_op_output("__xpu__mmdnn_match_conv_topk", "topk_out")
+            ->AsIntermediate();
+    // merge_all
+    q_bid_emb_grnn_att_grnn_fw_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 0);
+    q_bid_emb_grnn_att_grnn_rv_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 1);
+    q_bid_emb_grnn_att_att_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 2);
+    pt_bid_emb_grnn_att_grnn_fw_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 3);
+    pt_bid_emb_grnn_att_grnn_rv_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 4);
+    pt_bid_emb_grnn_att_att_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 5);
+    pa_bid_emb_att_att_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 6);
+    q_pt_match_conv_topk_topk_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_topk_x", 0);
+    q_pa_match_conv_topk_topk_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_topk_x", 1);
+    auto* merge_all_grnn_fw_wh =
+        VarNode("merge_all_grnn_fw_wh")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "grnn_fw_wh")
+            ->AsInput();
+    auto* merge_all_grnn_fw_wi =
+        VarNode("merge_all_grnn_fw_wi")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "grnn_fw_wi")
+            ->AsInput();
+    auto* merge_all_grnn_rv_wh =
+        VarNode("merge_all_grnn_rv_wh")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "grnn_rv_wh")
+            ->AsInput();
+    auto* merge_all_grnn_rv_wi =
+        VarNode("merge_all_grnn_rv_wi")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "grnn_rv_wi")
+            ->AsInput();
+    auto* merge_all_fc0_w =
+        VarNode("merge_all_fc0_w")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc0_w")
+            ->AsInput();
+    auto* merge_all_fc0_b =
+        VarNode("merge_all_fc0_b")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc0_b")
+            ->AsInput();
+    auto* merge_all_fc1_w =
+        VarNode("merge_all_fc1_w")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc1_w")
+            ->AsInput();
+    auto* merge_all_fc1_b =
+        VarNode("merge_all_fc1_b")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc1_b")
+            ->AsInput();
+    auto* merge_all_fc2_w =
+        VarNode("merge_all_fc2_w")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc2_w")
+            ->AsInput();
+    auto* merge_all_fc2_b =
+        VarNode("merge_all_fc2_b")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc2_b")
+            ->AsInput();
+    auto* merge_all_out =
+        VarNode("merge_all_out")
+            ->assert_is_op_output("__xpu__mmdnn_merge_all", "out")
+            ->AsOutput();
+    // all input and output
+    *q_basic >> *q_bid_emb_grnn_att;
+    *q_bigram0 >> *q_bid_emb_grnn_att;
+    *emb_tbl >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_grnn_fw_wh >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_grnn_fw_wi >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_grnn_rv_wh >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_grnn_rv_wi >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_att_fc_w >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_att_fc_b >> *q_bid_emb_grnn_att;
+
+    *pt_basic >> *pt_bid_emb_grnn_att;
+    *pt_bigram0 >> *pt_bid_emb_grnn_att;
+    *emb_tbl >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_grnn_fw_wh >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_grnn_fw_wi >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_grnn_rv_wh >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_grnn_rv_wi >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_att_fc_w >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_att_fc_b >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att >> *pt_bid_emb_grnn_att_emb_fw_out;
+
+    *pa_basic >> *pa_bid_emb_att;
+    *pa_bigram0 >> *pa_bid_emb_att;
+    *emb_tbl >> *pa_bid_emb_att;
+    *pa_bid_emb_att_att_fc_w >> *pa_bid_emb_att;
+    *pa_bid_emb_att_att_fc_b >> *pa_bid_emb_att;
+
+    *q_bid_emb_grnn_att_emb_fw_out >> *q_pa_match_conv_topk;
+    *pa_bid_emb_att_emb_fw_out >> *q_pa_match_conv_topk;
+    *q_pa_match_conv_topk_input_w >> *q_pa_match_conv_topk;
+    *q_pa_match_conv_topk_conv_w >> *q_pa_match_conv_topk;
+
+    *q_bid_emb_grnn_att_concat_3in1_out >> *q_pt_match_conv_topk;
+    *pt_bid_emb_grnn_att_concat_3in1_out >> *q_pt_match_conv_topk;
+    *q_pt_match_conv_topk_input_w >> *q_pt_match_conv_topk;
+    *q_pt_match_conv_topk_conv_w >> *q_pt_match_conv_topk;
+
+    *q_bid_emb_grnn_att_grnn_fw_pool_out >> *merge_all;
+    *q_bid_emb_grnn_att_grnn_rv_pool_out >> *merge_all;
+    *q_bid_emb_grnn_att_att_pool_out >> *merge_all;
+    *pt_bid_emb_grnn_att_grnn_fw_pool_out >> *merge_all;
+    *pt_bid_emb_grnn_att_grnn_rv_pool_out >> *merge_all;
+    *pt_bid_emb_grnn_att_att_pool_out >> *merge_all;
+    *pa_bid_emb_att_att_pool_out >> *merge_all;
+    *q_pt_match_conv_topk_topk_out >> *merge_all;
+    *q_pa_match_conv_topk_topk_out >> *merge_all;
+    *merge_all_grnn_fw_wh >> *merge_all;
+    *merge_all_grnn_fw_wi >> *merge_all;
+    *merge_all_grnn_rv_wh >> *merge_all;
+    *merge_all_grnn_rv_wi >> *merge_all;
+    *merge_all_fc0_w >> *merge_all;
+    *merge_all_fc0_b >> *merge_all;
+    *merge_all_fc1_w >> *merge_all;
+    *merge_all_fc1_b >> *merge_all;
+    *merge_all_fc2_w >> *merge_all;
+    *merge_all_fc2_b >> *merge_all;
+
+    *merge_all >> *merge_all_out;
+  }
+
+  void InsertNewNode(SSAGraph* graph, const key2nodes_t& matched) override {
+    LOG(INFO) << "MMDNN.v1 Whole Network Fusion!" << std::endl;
+    cpp::OpDesc op_desc;
+    op_desc.SetType("__xpu__mmdnn_multi_stream_v1");
+    SetInput(op_desc, matched, "emb_tbl");
+    SetInput(op_desc, matched, "q_basic");
+    SetInput(op_desc, matched, "q_bigram0");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_grnn_fw_wh");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_grnn_fw_wi");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_grnn_rv_wh");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_grnn_rv_wi");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_att_fc_w");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_att_fc_b");
+    SetInput(op_desc, matched, "pt_basic");
+    SetInput(op_desc, matched, "pt_bigram0");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_grnn_fw_wh");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_grnn_fw_wi");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_grnn_rv_wh");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_grnn_rv_wi");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_att_fc_w");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_att_fc_b");
+    SetInput(op_desc, matched, "pa_basic");
+    SetInput(op_desc, matched, "pa_bigram0");
+    SetInput(op_desc, matched, "pa_bid_emb_att_att_fc_w");
+    SetInput(op_desc, matched, "pa_bid_emb_att_att_fc_b");
+    SetInput(op_desc, matched, "q_pa_match_conv_topk_input_w");
+    SetInput(op_desc, matched, "q_pa_match_conv_topk_conv_w");
+    SetInput(op_desc, matched, "q_pt_match_conv_topk_input_w");
+    SetInput(op_desc, matched, "q_pt_match_conv_topk_conv_w");
+    SetInput(op_desc, matched, "merge_all_grnn_fw_wh");
+    SetInput(op_desc, matched, "merge_all_grnn_fw_wi");
+    SetInput(op_desc, matched, "merge_all_grnn_rv_wh");
+    SetInput(op_desc, matched, "merge_all_grnn_rv_wi");
+    SetInput(op_desc, matched, "merge_all_fc0_w");
+    SetInput(op_desc, matched, "merge_all_fc0_b");
+    SetInput(op_desc, matched, "merge_all_fc1_w");
+    SetInput(op_desc, matched, "merge_all_fc1_b");
+    SetInput(op_desc, matched, "merge_all_fc2_w");
+    SetInput(op_desc, matched, "merge_all_fc2_b");
+    op_desc.SetOutput("merge_all_out", {matched.at("merge_all_out")->arg()->name});
+
+    // q_bid_emb_grnn_att
+    SetAttrVectorFloat(matched, op_desc, "q_bid_emb_grnn_att",
+        "q_bid_emb_grnn_att_grnn_fw_wh_maxs", "grnn_fw_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "q_bid_emb_grnn_att",
+        "q_bid_emb_grnn_att_grnn_fw_wi_maxs", "grnn_fw_wi_maxs");
+    SetAttrVectorFloat(matched, op_desc, "q_bid_emb_grnn_att",
+        "q_bid_emb_grnn_att_grnn_rv_wh_maxs", "grnn_rv_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "q_bid_emb_grnn_att",
+        "q_bid_emb_grnn_att_grnn_rv_wi_maxs", "grnn_rv_wi_maxs");
+    SetAttrFloat(matched, op_desc, "q_bid_emb_grnn_att",
+        "q_bid_emb_grnn_att_att_fc_w_max", "att_fc_w_max");
+    // pt_bid_emb_grnn_att
+    SetAttrVectorFloat(matched, op_desc, "pt_bid_emb_grnn_att",
+        "pt_bid_emb_grnn_att_grnn_fw_wh_maxs", "grnn_fw_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "pt_bid_emb_grnn_att",
+        "pt_bid_emb_grnn_att_grnn_fw_wi_maxs", "grnn_fw_wi_maxs");
+    SetAttrVectorFloat(matched, op_desc, "pt_bid_emb_grnn_att",
+        "pt_bid_emb_grnn_att_grnn_rv_wh_maxs", "grnn_rv_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "pt_bid_emb_grnn_att",
+        "pt_bid_emb_grnn_att_grnn_rv_wi_maxs", "grnn_rv_wi_maxs");
+    SetAttrFloat(matched, op_desc, "pt_bid_emb_grnn_att",
+        "pt_bid_emb_grnn_att_att_fc_w_max", "att_fc_w_max");
+    // pa_bid_emb_att
+    SetAttrFloat(matched, op_desc, "pa_bid_emb_att",
+        "pa_bid_emb_att_att_fc_w_max", "att_fc_w_max");
+    // q_pa_match_conv_topk
+    SetAttrFloat(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_input_w_max", "input_w_max");
+    SetAttrFloat(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_conv_w_max", "conv_w_max");
+    SetAttrInt(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_dim_t", "dim_t");
+    SetAttrInt(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_output_channel", "output_channel");
+    SetAttrVectorInt(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_topks", "topks");
+    SetAttrInt(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_channel_num", "channel_num");
+    // q_pt_match_conv_topk
+    SetAttrFloat(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_input_w_max", "input_w_max");
+    SetAttrFloat(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_conv_w_max", "conv_w_max");
+    SetAttrInt(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_dim_t", "dim_t");
+    SetAttrInt(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_output_channel", "output_channel");
+    SetAttrVectorInt(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_topks", "topks");
+    SetAttrInt(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_channel_num", "channel_num");
+    // merge_all
+    SetAttrVectorFloat(matched, op_desc, "merge_all",
+        "merge_all_grnn_fw_wh_maxs", "grnn_fw_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "merge_all",
+        "merge_all_grnn_fw_wi_maxs", "grnn_fw_wi_maxs");
+    SetAttrVectorFloat(matched, op_desc, "merge_all",
+        "merge_all_grnn_rv_wh_maxs", "grnn_rv_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "merge_all",
+        "merge_all_grnn_rv_wi_maxs", "grnn_rv_wi_maxs");
+    SetAttrFloat(matched, op_desc, "merge_all",
+        "merge_all_fc0_w_max", "fc0_w_max");
+    SetAttrFloat(matched, op_desc, "merge_all",
+        "merge_all_fc1_w_max", "fc1_w_max");
+    SetAttrFloat(matched, op_desc, "merge_all",
+        "merge_all_fc2_w_max", "fc2_w_max");
+
+    auto* new_stmt = matched.at("q_bid_emb_grnn_att")->stmt();
+    auto new_op = LiteOpRegistry::Global().Create(op_desc.Type());
+    new_op->Attach(op_desc, new_stmt->op()->scope());
+    new_op->SetValidPlaces(new_stmt->op()->valid_places());
+    auto kernels = new_op->CreateKernels(new_op->valid_places());
+    new_stmt->SetOp(new_op);
+    new_stmt->SetKernels(std::move(kernels));
+
+    std::vector<std::string> arg_names{
+        "pt_basic",
+        "pt_bigram0",
+        "pt_bid_emb_grnn_att_grnn_fw_wh",
+        "pt_bid_emb_grnn_att_grnn_fw_wi",
+        "pt_bid_emb_grnn_att_grnn_rv_wh",
+        "pt_bid_emb_grnn_att_grnn_rv_wi",
+        "pt_bid_emb_grnn_att_att_fc_w",
+        "pt_bid_emb_grnn_att_att_fc_b",
+        "pa_basic",
+        "pa_bigram0",
+        "pa_bid_emb_att_att_fc_w",
+        "pa_bid_emb_att_att_fc_b",
+        "q_pa_match_conv_topk_input_w",
+        "q_pa_match_conv_topk_conv_w",
+        "q_pt_match_conv_topk_input_w",
+        "q_pt_match_conv_topk_conv_w",
+        "merge_all_grnn_fw_wh",
+        "merge_all_grnn_fw_wi",
+        "merge_all_grnn_rv_wh",
+        "merge_all_grnn_rv_wi",
+        "merge_all_fc0_w",
+        "merge_all_fc0_b",
+        "merge_all_fc1_w",
+        "merge_all_fc1_b",
+        "merge_all_fc2_w",
+        "merge_all_fc2_b",
+    };
+    for (auto name : arg_names) {
+      DirectedLink(matched.at(name), matched.at("q_bid_emb_grnn_att"));
+    }
+    std::vector<std::string> out_names{
+        "merge_all_out",
+    };
+    for (auto name : out_names) {
+      IR_OP_VAR_LINK(matched.at("q_bid_emb_grnn_att"), matched.at(name));
+    }
+  }
+};
+
+class XPUMmdnnMultiStreamV2Fuser : public FuseBase {
+ public:
+  void BuildPattern() override {
+    // 8 internal op
+    auto* q_bid_emb_grnn_att =
+        OpNode("q_bid_emb_grnn_att", "__xpu__mmdnn_bid_emb_grnn_att2");
+    auto* pt_bid_emb_grnn_att =
+        OpNode("pt_bid_emb_grnn_att", "__xpu__mmdnn_bid_emb_grnn_att")
+            ->AsIntermediate();
+    auto* pa_bid_emb_att =
+        OpNode("pa_bid_emb_att", "__xpu__mmdnn_bid_emb_att")
+            ->AsIntermediate();
+    auto* pcq_lut =
+        OpNode("pcq_lut", "lookup_table")
+            ->AsIntermediate();
+    auto* q_pa_match_conv_topk =
+        OpNode("q_pa_match_conv_topk", "__xpu__mmdnn_match_conv_topk")
+            ->AsIntermediate();
+    auto* q_pt_match_conv_topk =
+        OpNode("q_pt_match_conv_topk", "__xpu__mmdnn_match_conv_topk")
+            ->AsIntermediate();
+    auto* q_pcq_match_conv_topk =
+        OpNode("q_pcq_match_conv_topk", "__xpu__mmdnn_match_conv_topk")
+            ->AsIntermediate();
+    auto* merge_all =
+        OpNode("merge_all", "__xpu__mmdnn_merge_all")
+            ->AsIntermediate();
+    // common input:
+    auto* emb_tbl = VarNode("emb_tbl")->AsInput();
+    // assert
+    // q_bid_emb_grnn_att
+    auto* q_basic =
+        VarNode("q_basic")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att2", "id0")
+            ->AsInput();
+    auto* q_bigram0 =
+        VarNode("q_bigram0")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att2", "id1")
+            ->AsInput();
+    emb_tbl->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att2", "emb_tbl");
+    auto* q_bid_emb_grnn_att_grnn_fw_wh =
+        VarNode("q_bid_emb_grnn_att_grnn_fw_wh")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att2", "grnn_fw_wh")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_grnn_fw_wi =
+        VarNode("q_bid_emb_grnn_att_grnn_fw_wi")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att2", "grnn_fw_wi")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_grnn_rv_wh =
+        VarNode("q_bid_emb_grnn_att_grnn_rv_wh")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att2", "grnn_rv_wh")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_grnn_rv_wi =
+        VarNode("q_bid_emb_grnn_att_grnn_rv_wi")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att2", "grnn_rv_wi")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_att_fc_w =
+        VarNode("q_bid_emb_grnn_att_att_fc_w")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att2", "att_fc_w")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_att_fc_b =
+        VarNode("q_bid_emb_grnn_att_att_fc_b")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att2", "att_fc_b")
+            ->AsInput();
+    auto* q_bid_emb_grnn_att_emb0_out =
+        VarNode("q_bid_emb_grnn_att_emb0_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att2", "emb0_out")
+            ->AsIntermediate();
+    auto* q_bid_emb_grnn_att_grnn_fw_pool_out =
+        VarNode("q_bid_emb_grnn_att_grnn_fw_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att2", "grnn_fw_pool_out")
+            ->AsIntermediate();
+    auto* q_bid_emb_grnn_att_grnn_rv_pool_out =
+        VarNode("q_bid_emb_grnn_att_grnn_rv_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att2", "grnn_rv_pool_out")
+            ->AsIntermediate();
+    auto* q_bid_emb_grnn_att_att_pool_out =
+        VarNode("q_bid_emb_grnn_att_att_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att2", "att_pool_out")
+            ->AsIntermediate();
+    auto* q_bid_emb_grnn_att_concat_3in1_out =
+        VarNode("q_bid_emb_grnn_att_concat_3in1_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att2", "concat_3in1_out")
+            ->AsIntermediate();
+    auto* q_bid_emb_grnn_att_emb_fw_out =
+        VarNode("q_bid_emb_grnn_att_emb_fw_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att2", "emb_fw_out")
+            ->AsIntermediate();
+    // pt_bid_emb_grnn_att
+    auto* pt_basic =
+        VarNode("pt_basic")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "id0")
+            ->AsInput();
+    auto* pt_bigram0 =
+        VarNode("pt_bigram0")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "id1")
+            ->AsInput();
+    emb_tbl->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "emb_tbl");
+    auto* pt_bid_emb_grnn_att_grnn_fw_wh =
+        VarNode("pt_bid_emb_grnn_att_grnn_fw_wh")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_fw_wh")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_grnn_fw_wi =
+        VarNode("pt_bid_emb_grnn_att_grnn_fw_wi")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_fw_wi")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_grnn_rv_wh =
+        VarNode("pt_bid_emb_grnn_att_grnn_rv_wh")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_rv_wh")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_grnn_rv_wi =
+        VarNode("pt_bid_emb_grnn_att_grnn_rv_wi")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "grnn_rv_wi")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_att_fc_w =
+        VarNode("pt_bid_emb_grnn_att_att_fc_w")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "att_fc_w")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_att_fc_b =
+        VarNode("pt_bid_emb_grnn_att_att_fc_b")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_grnn_att", "att_fc_b")
+            ->AsInput();
+    auto* pt_bid_emb_grnn_att_grnn_fw_pool_out =
+        VarNode("pt_bid_emb_grnn_att_grnn_fw_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "grnn_fw_pool_out")
+            ->AsIntermediate();
+    auto* pt_bid_emb_grnn_att_grnn_rv_pool_out =
+        VarNode("pt_bid_emb_grnn_att_grnn_rv_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "grnn_rv_pool_out")
+            ->AsIntermediate();
+    auto* pt_bid_emb_grnn_att_att_pool_out =
+        VarNode("pt_bid_emb_grnn_att_att_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "att_pool_out")
+            ->AsIntermediate();
+    auto* pt_bid_emb_grnn_att_concat_3in1_out =
+        VarNode("pt_bid_emb_grnn_att_concat_3in1_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "concat_3in1_out")
+            ->AsIntermediate();
+    auto* pt_bid_emb_grnn_att_emb_fw_out =
+        VarNode("pt_bid_emb_grnn_att_emb_fw_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_grnn_att", "emb_fw_out")
+            ->AsIntermediate();
+    // pa_bid_emb_att
+    auto* pa_basic =
+        VarNode("pa_basic")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_att", "id0")
+            ->AsInput();
+    auto* pa_bigram0 =
+        VarNode("pa_bigram0")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_att", "id1")
+            ->AsInput();
+    emb_tbl->assert_is_op_input("__xpu__mmdnn_bid_emb_att", "emb_tbl");
+    auto* pa_bid_emb_att_att_fc_w =
+        VarNode("pa_bid_emb_att_att_fc_w")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_att", "att_fc_w")
+            ->AsInput();
+    auto* pa_bid_emb_att_att_fc_b =
+        VarNode("pa_bid_emb_att_att_fc_b")
+            ->assert_is_op_input("__xpu__mmdnn_bid_emb_att", "att_fc_b")
+            ->AsInput();
+    auto* pa_bid_emb_att_att_pool_out =
+        VarNode("pa_bid_emb_att_att_pool_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_att", "att_pool_out")
+            ->AsIntermediate();
+    auto* pa_bid_emb_att_emb_fw_out =
+        VarNode("pa_bid_emb_att_emb_fw_out")
+            ->assert_is_op_output("__xpu__mmdnn_bid_emb_att", "emb_fw_out")
+            ->AsIntermediate();
+    // pcq_lut
+    auto* pcq_basic =
+        VarNode("pcq_basic")
+            ->assert_is_op_input("lookup_table", "Ids")
+            ->AsInput();
+    emb_tbl->assert_is_op_input("lookup_table", "W");
+    auto* pcq_lut_out =
+        VarNode("pcq_lut_out")
+            ->assert_is_op_output("lookup_table", "Out")
+            ->AsIntermediate();
+    // q_pa_match_conv_topk
+    q_bid_emb_grnn_att_emb_fw_out->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_x");
+    pa_bid_emb_att_emb_fw_out->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_y");
+    auto* q_pa_match_conv_topk_input_w =
+        VarNode("q_pa_match_conv_topk_input_w")
+            ->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_w")
+            ->AsInput();
+    auto* q_pa_match_conv_topk_conv_w =
+        VarNode("q_pa_match_conv_topk_conv_w")
+            ->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "conv_w")
+            ->AsInput();
+    auto* q_pa_match_conv_topk_topk_out =
+        VarNode("q_pa_match_conv_topk_topk_out")
+            ->assert_is_op_output("__xpu__mmdnn_match_conv_topk", "topk_out")
+            ->AsIntermediate();
+    // q_pt_match_conv_topk
+    q_bid_emb_grnn_att_concat_3in1_out->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_x");
+    pt_bid_emb_grnn_att_concat_3in1_out->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_y");
+    auto* q_pt_match_conv_topk_input_w =
+        VarNode("q_pt_match_conv_topk_input_w")
+            ->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_w")
+            ->AsInput();
+    auto* q_pt_match_conv_topk_conv_w =
+        VarNode("q_pt_match_conv_topk_conv_w")
+            ->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "conv_w")
+            ->AsInput();
+    auto* q_pt_match_conv_topk_topk_out =
+        VarNode("q_pt_match_conv_topk_topk_out")
+            ->assert_is_op_output("__xpu__mmdnn_match_conv_topk", "topk_out")
+            ->AsIntermediate();
+    // q_pcq_match_conv_topk
+    q_bid_emb_grnn_att_emb0_out->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_x");
+    pcq_lut_out->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_y");
+    auto* q_pcq_match_conv_topk_input_w =
+        VarNode("q_pcq_match_conv_topk_input_w")
+            ->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "input_w")
+            ->AsInput();
+    auto* q_pcq_match_conv_topk_conv_w =
+        VarNode("q_pcq_match_conv_topk_conv_w")
+            ->assert_is_op_input("__xpu__mmdnn_match_conv_topk", "conv_w")
+            ->AsInput();
+    auto* q_pcq_match_conv_topk_topk_out =
+        VarNode("q_pcq_match_conv_topk_topk_out")
+            ->assert_is_op_output("__xpu__mmdnn_match_conv_topk", "topk_out")
+            ->AsIntermediate();
+    // merge_all
+    q_bid_emb_grnn_att_grnn_fw_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 0);
+    q_bid_emb_grnn_att_grnn_rv_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 1);
+    q_bid_emb_grnn_att_att_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 2);
+    pt_bid_emb_grnn_att_grnn_fw_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 3);
+    pt_bid_emb_grnn_att_grnn_rv_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 4);
+    pt_bid_emb_grnn_att_att_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 5);
+    pa_bid_emb_att_att_pool_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_7in1_x", 6);
+    q_pt_match_conv_topk_topk_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_topk_x", 0);
+    q_pa_match_conv_topk_topk_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_topk_x", 1);
+    q_pcq_match_conv_topk_topk_out
+        ->assert_is_op_nth_input("__xpu__mmdnn_merge_all", "concat_topk_x", 2);
+    auto* merge_all_grnn_fw_wh =
+        VarNode("merge_all_grnn_fw_wh")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "grnn_fw_wh")
+            ->AsInput();
+    auto* merge_all_grnn_fw_wi =
+        VarNode("merge_all_grnn_fw_wi")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "grnn_fw_wi")
+            ->AsInput();
+    auto* merge_all_grnn_rv_wh =
+        VarNode("merge_all_grnn_rv_wh")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "grnn_rv_wh")
+            ->AsInput();
+    auto* merge_all_grnn_rv_wi =
+        VarNode("merge_all_grnn_rv_wi")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "grnn_rv_wi")
+            ->AsInput();
+    auto* merge_all_fc0_w =
+        VarNode("merge_all_fc0_w")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc0_w")
+            ->AsInput();
+    auto* merge_all_fc0_b =
+        VarNode("merge_all_fc0_b")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc0_b")
+            ->AsInput();
+    auto* merge_all_fc1_w =
+        VarNode("merge_all_fc1_w")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc1_w")
+            ->AsInput();
+    auto* merge_all_fc1_b =
+        VarNode("merge_all_fc1_b")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc1_b")
+            ->AsInput();
+    auto* merge_all_fc2_w =
+        VarNode("merge_all_fc2_w")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc2_w")
+            ->AsInput();
+    auto* merge_all_fc2_b =
+        VarNode("merge_all_fc2_b")
+            ->assert_is_op_input("__xpu__mmdnn_merge_all", "fc2_b")
+            ->AsInput();
+    auto* merge_all_out =
+        VarNode("merge_all_out")
+            ->assert_is_op_output("__xpu__mmdnn_merge_all", "out")
+            ->AsOutput();
+    // all input and output
+    *q_basic >> *q_bid_emb_grnn_att;
+    *q_bigram0 >> *q_bid_emb_grnn_att;
+    *emb_tbl >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_grnn_fw_wh >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_grnn_fw_wi >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_grnn_rv_wh >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_grnn_rv_wi >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_att_fc_w >> *q_bid_emb_grnn_att;
+    *q_bid_emb_grnn_att_att_fc_b >> *q_bid_emb_grnn_att;
+
+    *pt_basic >> *pt_bid_emb_grnn_att;
+    *pt_bigram0 >> *pt_bid_emb_grnn_att;
+    *emb_tbl >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_grnn_fw_wh >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_grnn_fw_wi >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_grnn_rv_wh >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_grnn_rv_wi >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_att_fc_w >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att_att_fc_b >> *pt_bid_emb_grnn_att;
+    *pt_bid_emb_grnn_att >> *pt_bid_emb_grnn_att_emb_fw_out;
+
+    *pa_basic >> *pa_bid_emb_att;
+    *pa_bigram0 >> *pa_bid_emb_att;
+    *emb_tbl >> *pa_bid_emb_att;
+    *pa_bid_emb_att_att_fc_w >> *pa_bid_emb_att;
+    *pa_bid_emb_att_att_fc_b >> *pa_bid_emb_att;
+
+    *pcq_basic >> *pcq_lut;
+    *emb_tbl >> *pcq_lut;
+
+    *q_bid_emb_grnn_att_emb_fw_out >> *q_pa_match_conv_topk;
+    *pa_bid_emb_att_emb_fw_out >> *q_pa_match_conv_topk;
+    *q_pa_match_conv_topk_input_w >> *q_pa_match_conv_topk;
+    *q_pa_match_conv_topk_conv_w >> *q_pa_match_conv_topk;
+
+    *q_bid_emb_grnn_att_concat_3in1_out >> *q_pt_match_conv_topk;
+    *pt_bid_emb_grnn_att_concat_3in1_out >> *q_pt_match_conv_topk;
+    *q_pt_match_conv_topk_input_w >> *q_pt_match_conv_topk;
+    *q_pt_match_conv_topk_conv_w >> *q_pt_match_conv_topk;
+
+    *q_bid_emb_grnn_att_emb0_out >> *q_pcq_match_conv_topk;
+    *pcq_lut_out >> *q_pcq_match_conv_topk;
+    *q_pcq_match_conv_topk_input_w >> *q_pcq_match_conv_topk;
+    *q_pcq_match_conv_topk_conv_w >> *q_pcq_match_conv_topk;
+
+    *q_bid_emb_grnn_att_grnn_fw_pool_out >> *merge_all;
+    *q_bid_emb_grnn_att_grnn_rv_pool_out >> *merge_all;
+    *q_bid_emb_grnn_att_att_pool_out >> *merge_all;
+    *pt_bid_emb_grnn_att_grnn_fw_pool_out >> *merge_all;
+    *pt_bid_emb_grnn_att_grnn_rv_pool_out >> *merge_all;
+    *pt_bid_emb_grnn_att_att_pool_out >> *merge_all;
+    *pa_bid_emb_att_att_pool_out >> *merge_all;
+    *q_pt_match_conv_topk_topk_out >> *merge_all;
+    *q_pa_match_conv_topk_topk_out >> *merge_all;
+    *q_pcq_match_conv_topk_topk_out >> *merge_all;
+    *merge_all_grnn_fw_wh >> *merge_all;
+    *merge_all_grnn_fw_wi >> *merge_all;
+    *merge_all_grnn_rv_wh >> *merge_all;
+    *merge_all_grnn_rv_wi >> *merge_all;
+    *merge_all_fc0_w >> *merge_all;
+    *merge_all_fc0_b >> *merge_all;
+    *merge_all_fc1_w >> *merge_all;
+    *merge_all_fc1_b >> *merge_all;
+    *merge_all_fc2_w >> *merge_all;
+    *merge_all_fc2_b >> *merge_all;
+
+    *merge_all >> *merge_all_out;
+  }
+
+  void InsertNewNode(SSAGraph* graph, const key2nodes_t& matched) override {
+    LOG(INFO) << "MMDNN.v2 Whole Network Fusion!" << std::endl;
+    cpp::OpDesc op_desc;
+    op_desc.SetType("__xpu__mmdnn_multi_stream_v2");
+    SetInput(op_desc, matched, "emb_tbl");
+    SetInput(op_desc, matched, "q_basic");
+    SetInput(op_desc, matched, "q_bigram0");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_grnn_fw_wh");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_grnn_fw_wi");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_grnn_rv_wh");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_grnn_rv_wi");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_att_fc_w");
+    SetInput(op_desc, matched, "q_bid_emb_grnn_att_att_fc_b");
+    SetInput(op_desc, matched, "pt_basic");
+    SetInput(op_desc, matched, "pt_bigram0");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_grnn_fw_wh");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_grnn_fw_wi");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_grnn_rv_wh");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_grnn_rv_wi");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_att_fc_w");
+    SetInput(op_desc, matched, "pt_bid_emb_grnn_att_att_fc_b");
+    SetInput(op_desc, matched, "pa_basic");
+    SetInput(op_desc, matched, "pa_bigram0");
+    SetInput(op_desc, matched, "pa_bid_emb_att_att_fc_w");
+    SetInput(op_desc, matched, "pa_bid_emb_att_att_fc_b");
+    SetInput(op_desc, matched, "pcq_basic");
+    SetInput(op_desc, matched, "q_pa_match_conv_topk_input_w");
+    SetInput(op_desc, matched, "q_pa_match_conv_topk_conv_w");
+    SetInput(op_desc, matched, "q_pt_match_conv_topk_input_w");
+    SetInput(op_desc, matched, "q_pt_match_conv_topk_conv_w");
+    SetInput(op_desc, matched, "q_pcq_match_conv_topk_input_w");
+    SetInput(op_desc, matched, "q_pcq_match_conv_topk_conv_w");
+    SetInput(op_desc, matched, "merge_all_grnn_fw_wh");
+    SetInput(op_desc, matched, "merge_all_grnn_fw_wi");
+    SetInput(op_desc, matched, "merge_all_grnn_rv_wh");
+    SetInput(op_desc, matched, "merge_all_grnn_rv_wi");
+    SetInput(op_desc, matched, "merge_all_fc0_w");
+    SetInput(op_desc, matched, "merge_all_fc0_b");
+    SetInput(op_desc, matched, "merge_all_fc1_w");
+    SetInput(op_desc, matched, "merge_all_fc1_b");
+    SetInput(op_desc, matched, "merge_all_fc2_w");
+    SetInput(op_desc, matched, "merge_all_fc2_b");
+    op_desc.SetOutput("merge_all_out", {matched.at("merge_all_out")->arg()->name});
+
+    // q_bid_emb_grnn_att
+    SetAttrVectorFloat(matched, op_desc, "q_bid_emb_grnn_att",
+        "q_bid_emb_grnn_att_grnn_fw_wh_maxs", "grnn_fw_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "q_bid_emb_grnn_att",
+        "q_bid_emb_grnn_att_grnn_fw_wi_maxs", "grnn_fw_wi_maxs");
+    SetAttrVectorFloat(matched, op_desc, "q_bid_emb_grnn_att",
+        "q_bid_emb_grnn_att_grnn_rv_wh_maxs", "grnn_rv_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "q_bid_emb_grnn_att",
+        "q_bid_emb_grnn_att_grnn_rv_wi_maxs", "grnn_rv_wi_maxs");
+    SetAttrFloat(matched, op_desc, "q_bid_emb_grnn_att",
+        "q_bid_emb_grnn_att_att_fc_w_max", "att_fc_w_max");
+    // pt_bid_emb_grnn_att
+    SetAttrVectorFloat(matched, op_desc, "pt_bid_emb_grnn_att",
+        "pt_bid_emb_grnn_att_grnn_fw_wh_maxs", "grnn_fw_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "pt_bid_emb_grnn_att",
+        "pt_bid_emb_grnn_att_grnn_fw_wi_maxs", "grnn_fw_wi_maxs");
+    SetAttrVectorFloat(matched, op_desc, "pt_bid_emb_grnn_att",
+        "pt_bid_emb_grnn_att_grnn_rv_wh_maxs", "grnn_rv_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "pt_bid_emb_grnn_att",
+        "pt_bid_emb_grnn_att_grnn_rv_wi_maxs", "grnn_rv_wi_maxs");
+    SetAttrFloat(matched, op_desc, "pt_bid_emb_grnn_att",
+        "pt_bid_emb_grnn_att_att_fc_w_max", "att_fc_w_max");
+    // pa_bid_emb_att
+    SetAttrFloat(matched, op_desc, "pa_bid_emb_att",
+        "pa_bid_emb_att_att_fc_w_max", "att_fc_w_max");
+    // q_pa_match_conv_topk
+    SetAttrFloat(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_input_w_max", "input_w_max");
+    SetAttrFloat(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_conv_w_max", "conv_w_max");
+    SetAttrInt(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_dim_t", "dim_t");
+    SetAttrInt(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_output_channel", "output_channel");
+    SetAttrVectorInt(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_topks", "topks");
+    SetAttrInt(matched, op_desc, "q_pa_match_conv_topk",
+        "q_pa_match_conv_topk_channel_num", "channel_num");
+    // q_pt_match_conv_topk
+    SetAttrFloat(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_input_w_max", "input_w_max");
+    SetAttrFloat(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_conv_w_max", "conv_w_max");
+    SetAttrInt(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_dim_t", "dim_t");
+    SetAttrInt(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_output_channel", "output_channel");
+    SetAttrVectorInt(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_topks", "topks");
+    SetAttrInt(matched, op_desc, "q_pt_match_conv_topk",
+        "q_pt_match_conv_topk_channel_num", "channel_num");
+    // q_pcq_match_conv_topk
+    SetAttrFloat(matched, op_desc, "q_pcq_match_conv_topk",
+        "q_pcq_match_conv_topk_input_w_max", "input_w_max");
+    SetAttrFloat(matched, op_desc, "q_pcq_match_conv_topk",
+        "q_pcq_match_conv_topk_conv_w_max", "conv_w_max");
+    SetAttrInt(matched, op_desc, "q_pcq_match_conv_topk",
+        "q_pcq_match_conv_topk_dim_t", "dim_t");
+    SetAttrInt(matched, op_desc, "q_pcq_match_conv_topk",
+        "q_pcq_match_conv_topk_output_channel", "output_channel");
+    SetAttrVectorInt(matched, op_desc, "q_pcq_match_conv_topk",
+        "q_pcq_match_conv_topk_topks", "topks");
+    SetAttrInt(matched, op_desc, "q_pcq_match_conv_topk",
+        "q_pcq_match_conv_topk_channel_num", "channel_num");
+    // merge_all
+    SetAttrVectorFloat(matched, op_desc, "merge_all",
+        "merge_all_grnn_fw_wh_maxs", "grnn_fw_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "merge_all",
+        "merge_all_grnn_fw_wi_maxs", "grnn_fw_wi_maxs");
+    SetAttrVectorFloat(matched, op_desc, "merge_all",
+        "merge_all_grnn_rv_wh_maxs", "grnn_rv_wh_maxs");
+    SetAttrVectorFloat(matched, op_desc, "merge_all",
+        "merge_all_grnn_rv_wi_maxs", "grnn_rv_wi_maxs");
+    SetAttrFloat(matched, op_desc, "merge_all",
+        "merge_all_fc0_w_max", "fc0_w_max");
+    SetAttrFloat(matched, op_desc, "merge_all",
+        "merge_all_fc1_w_max", "fc1_w_max");
+    SetAttrFloat(matched, op_desc, "merge_all",
+        "merge_all_fc2_w_max", "fc2_w_max");
+
+    auto* new_stmt = matched.at("q_bid_emb_grnn_att")->stmt();
+    auto new_op = LiteOpRegistry::Global().Create(op_desc.Type());
+    new_op->Attach(op_desc, new_stmt->op()->scope());
+    new_op->SetValidPlaces(new_stmt->op()->valid_places());
+    auto kernels = new_op->CreateKernels(new_op->valid_places());
+    new_stmt->SetOp(new_op);
+    new_stmt->SetKernels(std::move(kernels));
+
+    std::vector<std::string> arg_names{
+        "pt_basic",
+        "pt_bigram0",
+        "pt_bid_emb_grnn_att_grnn_fw_wh",
+        "pt_bid_emb_grnn_att_grnn_fw_wi",
+        "pt_bid_emb_grnn_att_grnn_rv_wh",
+        "pt_bid_emb_grnn_att_grnn_rv_wi",
+        "pt_bid_emb_grnn_att_att_fc_w",
+        "pt_bid_emb_grnn_att_att_fc_b",
+        "pa_basic",
+        "pa_bigram0",
+        "pa_bid_emb_att_att_fc_w",
+        "pa_bid_emb_att_att_fc_b",
+        "pcq_basic",
+        "q_pa_match_conv_topk_input_w",
+        "q_pa_match_conv_topk_conv_w",
+        "q_pt_match_conv_topk_input_w",
+        "q_pt_match_conv_topk_conv_w",
+        "q_pcq_match_conv_topk_input_w",
+        "q_pcq_match_conv_topk_conv_w",
+        "merge_all_grnn_fw_wh",
+        "merge_all_grnn_fw_wi",
+        "merge_all_grnn_rv_wh",
+        "merge_all_grnn_rv_wi",
+        "merge_all_fc0_w",
+        "merge_all_fc0_b",
+        "merge_all_fc1_w",
+        "merge_all_fc1_b",
+        "merge_all_fc2_w",
+        "merge_all_fc2_b",
+    };
+    for (auto name : arg_names) {
+      DirectedLink(matched.at(name), matched.at("q_bid_emb_grnn_att"));
+    }
+    std::vector<std::string> out_names{
+        "merge_all_out",
+    };
+    for (auto name : out_names) {
+      IR_OP_VAR_LINK(matched.at("q_bid_emb_grnn_att"), matched.at(name));
+    }
+
+  }
+};
+
 }  // namespace fusion
 
 class XPUMmdnnFusePass : public ProgramPass {
  public:
   void Apply(const std::unique_ptr<SSAGraph>& graph) override {
     if (GetBoolFromEnv("XPU_ENABLE_XTCL")) return;
+    bool xpu_disable_multi_stream = GetBoolFromEnv("XPU_DISABLE_MULTI_STREAM");
 
     fusion::XPUMmdnnFloat2Fix float_2_fix;
-    float_2_fix(graph.get());
+    float_2_fix(graph.get(), xpu_disable_multi_stream);
     fusion::XPUMmdnnSearchAttentionFuser search_att_fuser;
     search_att_fuser(graph.get());
     fusion::XPUMmdnnMatchConvTopkFuser match_conv_topk_fuser;
@@ -1627,6 +2677,13 @@ class XPUMmdnnFusePass : public ProgramPass {
       fusion::XPUMmdnnMergeAllFuser merge_all_fuser(n_concat_topk);
       merge_all_fuser(graph.get());
     }
+
+    if (!xpu_disable_multi_stream) {
+      fusion::XPUMmdnnMultiStreamV1Fuser multi_stream_v1_fuser;
+      multi_stream_v1_fuser(graph.get());
+      fusion::XPUMmdnnMultiStreamV2Fuser multi_stream_v2_fuser;
+      multi_stream_v2_fuser(graph.get());
+    }
   }
 };
 
@@ -1641,4 +2698,6 @@ REGISTER_MIR_PASS(__xpu__mmdnn_fuse_pass, paddle::lite::mir::XPUMmdnnFusePass)
     .BindKernel("__xpu__mmdnn_bid_emb_grnn_att2")
     .BindKernel("__xpu__mmdnn_bid_emb_att")
     .BindKernel("__xpu__mmdnn_match_conv_topk")
-    .BindKernel("__xpu__mmdnn_merge_all");
+    .BindKernel("__xpu__mmdnn_merge_all")
+    .BindKernel("__xpu__mmdnn_multi_stream_v1")
+    .BindKernel("__xpu__mmdnn_multi_stream_v2");

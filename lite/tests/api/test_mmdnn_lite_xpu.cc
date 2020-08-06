@@ -26,9 +26,11 @@
 
 DEFINE_bool(perf, false, "perf?");
 DEFINE_string(perf_input, "perf_input", "perf_input");
-DEFINE_int32(perf_batch_size, 40, "perf_batch_size");
+DEFINE_int32(perf_batch_size, 20, "perf_batch_size");
 DEFINE_bool(use_xpu, true, "use_xpu?");
 DEFINE_int32(perf_dev, 0, "perf_dev");
+DEFINE_bool(dump_result, false, "dump_result?");
+DEFINE_bool(has_param_file, false, "has_param_file?");
 
 namespace paddle {
 namespace lite {
@@ -201,9 +203,12 @@ class FileReader {
 
 TEST(MMDNN, test_mmdnn_lite_xpu) {
   lite_api::CxxConfig config;
-  // config.set_model_dir(FLAGS_model_dir);
-  config.set_model_file(FLAGS_model_dir + "/__model__");
-  config.set_param_file(FLAGS_model_dir + "/__param__");
+  if (FLAGS_has_param_file) {
+    config.set_model_file(FLAGS_model_dir + "/__model__");
+    config.set_param_file(FLAGS_model_dir + "/__param__");
+  } else {
+    config.set_model_dir(FLAGS_model_dir);
+  }
   config.set_xpu_dev_per_thread(FLAGS_perf_dev);
   if (FLAGS_use_xpu) {
     config.set_valid_places(
@@ -218,7 +223,7 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
          lite_api::Place{TARGET(kX86), PRECISION(kInt64)},
          lite_api::Place{TARGET(kHost), PRECISION(kFloat)}});
   }
-  config.set_xpu_workspace_l3_size_per_thread();
+  config.set_xpu_workspace_l3_size_per_thread(14 * 1024 * 1024);
   auto predictor = lite_api::CreatePaddlePredictor(config);
 
   if (FLAGS_perf) {
@@ -248,6 +253,15 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
       predictor->Run();
       auto end = GetCurrentUS();
       tsc_sum += end - start;
+
+      if (FLAGS_dump_result) {
+        auto out = predictor->GetOutput(0);
+        auto out_shape = out->shape();
+        auto out_size = std::accumulate(out_shape.begin(), out_shape.end(), 1, std::multiplies<int64_t>());
+        for (int i = 0; i < out_size; ++i) {
+          LOG(INFO) << "out[" << i << "] = " << out->data<float>()[i];
+        }
+      }
     }
     LOG(INFO) << "================== Speed Report ===================";
     LOG(INFO) << "Model: " << FLAGS_model_dir << ", threads num "

@@ -1722,6 +1722,170 @@ struct XPUMmdnnMergeAllParam : ParamBase {
   lite::Tensor* out{};
 };
 
+struct XPUMmdnnMultiStreamV1Param : ParamBase {
+  lite::Tensor* emb_tbl{};
+  lite::Tensor* q_basic{};
+  lite::Tensor* q_bigram0{};
+  lite::Tensor* q_bid_emb_grnn_att_grnn_fw_wh{};
+  lite::Tensor* q_bid_emb_grnn_att_grnn_fw_wi{};
+  lite::Tensor* q_bid_emb_grnn_att_grnn_rv_wh{};
+  lite::Tensor* q_bid_emb_grnn_att_grnn_rv_wi{};
+  lite::Tensor* q_bid_emb_grnn_att_att_fc_w{};
+  lite::Tensor* q_bid_emb_grnn_att_att_fc_b{};
+  lite::Tensor* pt_basic{};
+  lite::Tensor* pt_bigram0{};
+  lite::Tensor* pt_bid_emb_grnn_att_grnn_fw_wh{};
+  lite::Tensor* pt_bid_emb_grnn_att_grnn_fw_wi{};
+  lite::Tensor* pt_bid_emb_grnn_att_grnn_rv_wh{};
+  lite::Tensor* pt_bid_emb_grnn_att_grnn_rv_wi{};
+  lite::Tensor* pt_bid_emb_grnn_att_att_fc_w{};
+  lite::Tensor* pt_bid_emb_grnn_att_att_fc_b{};
+  lite::Tensor* pa_basic{};
+  lite::Tensor* pa_bigram0{};
+  lite::Tensor* pa_bid_emb_att_att_fc_w{};
+  lite::Tensor* pa_bid_emb_att_att_fc_b{};
+  lite::Tensor* q_pa_match_conv_topk_input_w{};
+  lite::Tensor* q_pa_match_conv_topk_conv_w{};
+  lite::Tensor* q_pt_match_conv_topk_input_w{};
+  lite::Tensor* q_pt_match_conv_topk_conv_w{};
+  lite::Tensor* merge_all_grnn_fw_wh{};
+  lite::Tensor* merge_all_grnn_fw_wi{};
+  lite::Tensor* merge_all_grnn_rv_wh{};
+  lite::Tensor* merge_all_grnn_rv_wi{};
+  lite::Tensor* merge_all_fc0_w{};
+  lite::Tensor* merge_all_fc0_b{};
+  lite::Tensor* merge_all_fc1_w{};
+  lite::Tensor* merge_all_fc1_b{};
+  lite::Tensor* merge_all_fc2_w{};
+  lite::Tensor* merge_all_fc2_b{};
+
+  // q_bid_emb_grnn_att
+  std::vector<float> q_bid_emb_grnn_att_grnn_fw_wh_maxs;
+  std::vector<float> q_bid_emb_grnn_att_grnn_fw_wi_maxs;
+  std::vector<float> q_bid_emb_grnn_att_grnn_rv_wh_maxs;
+  std::vector<float> q_bid_emb_grnn_att_grnn_rv_wi_maxs;
+  float q_bid_emb_grnn_att_att_fc_w_max{0.0f};
+  // pt_bid_emb_grnn_att
+  std::vector<float> pt_bid_emb_grnn_att_grnn_fw_wh_maxs;
+  std::vector<float> pt_bid_emb_grnn_att_grnn_fw_wi_maxs;
+  std::vector<float> pt_bid_emb_grnn_att_grnn_rv_wh_maxs;
+  std::vector<float> pt_bid_emb_grnn_att_grnn_rv_wi_maxs;
+  float pt_bid_emb_grnn_att_att_fc_w_max{0.0f};
+  // pa_bid_emb_att
+  float pa_bid_emb_att_att_fc_w_max{0.0f};
+  // q_pa_match_conv_topk
+  float q_pa_match_conv_topk_input_w_max{0.0f};
+  float q_pa_match_conv_topk_conv_w_max{0.0f};
+  int q_pa_match_conv_topk_dim_t{0};
+  int q_pa_match_conv_topk_output_channel{0};
+  std::vector<int> q_pa_match_conv_topk_topks;
+  int q_pa_match_conv_topk_channel_num{0};
+  // q_pt_match_conv_topk
+  float q_pt_match_conv_topk_input_w_max{0.0f};
+  float q_pt_match_conv_topk_conv_w_max{0.0f};
+  int q_pt_match_conv_topk_dim_t{0};
+  int q_pt_match_conv_topk_output_channel{0};
+  std::vector<int> q_pt_match_conv_topk_topks;
+  int q_pt_match_conv_topk_channel_num{0};
+  // merge_all
+  std::vector<float> merge_all_grnn_fw_wh_maxs;
+  std::vector<float> merge_all_grnn_fw_wi_maxs;
+  std::vector<float> merge_all_grnn_rv_wh_maxs;
+  std::vector<float> merge_all_grnn_rv_wi_maxs;
+  float merge_all_fc0_w_max{0.0f};
+  float merge_all_fc1_w_max{0.0f};
+  float merge_all_fc2_w_max{0.0f};
+
+  lite::Tensor* merge_all_out{};
+};
+
+struct XPUMmdnnMultiStreamV2Param : ParamBase {
+  lite::Tensor* emb_tbl{};
+  lite::Tensor* q_basic{};
+  lite::Tensor* q_bigram0{};
+  lite::Tensor* q_bid_emb_grnn_att_grnn_fw_wh{};
+  lite::Tensor* q_bid_emb_grnn_att_grnn_fw_wi{};
+  lite::Tensor* q_bid_emb_grnn_att_grnn_rv_wh{};
+  lite::Tensor* q_bid_emb_grnn_att_grnn_rv_wi{};
+  lite::Tensor* q_bid_emb_grnn_att_att_fc_w{};
+  lite::Tensor* q_bid_emb_grnn_att_att_fc_b{};
+  lite::Tensor* pt_basic{};
+  lite::Tensor* pt_bigram0{};
+  lite::Tensor* pt_bid_emb_grnn_att_grnn_fw_wh{};
+  lite::Tensor* pt_bid_emb_grnn_att_grnn_fw_wi{};
+  lite::Tensor* pt_bid_emb_grnn_att_grnn_rv_wh{};
+  lite::Tensor* pt_bid_emb_grnn_att_grnn_rv_wi{};
+  lite::Tensor* pt_bid_emb_grnn_att_att_fc_w{};
+  lite::Tensor* pt_bid_emb_grnn_att_att_fc_b{};
+  lite::Tensor* pa_basic{};
+  lite::Tensor* pa_bigram0{};
+  lite::Tensor* pa_bid_emb_att_att_fc_w{};
+  lite::Tensor* pa_bid_emb_att_att_fc_b{};
+  lite::Tensor* pcq_basic{};
+  lite::Tensor* q_pa_match_conv_topk_input_w{};
+  lite::Tensor* q_pa_match_conv_topk_conv_w{};
+  lite::Tensor* q_pt_match_conv_topk_input_w{};
+  lite::Tensor* q_pt_match_conv_topk_conv_w{};
+  lite::Tensor* q_pcq_match_conv_topk_input_w{};
+  lite::Tensor* q_pcq_match_conv_topk_conv_w{};
+  lite::Tensor* merge_all_grnn_fw_wh{};
+  lite::Tensor* merge_all_grnn_fw_wi{};
+  lite::Tensor* merge_all_grnn_rv_wh{};
+  lite::Tensor* merge_all_grnn_rv_wi{};
+  lite::Tensor* merge_all_fc0_w{};
+  lite::Tensor* merge_all_fc0_b{};
+  lite::Tensor* merge_all_fc1_w{};
+  lite::Tensor* merge_all_fc1_b{};
+  lite::Tensor* merge_all_fc2_w{};
+  lite::Tensor* merge_all_fc2_b{};
+
+  // q_bid_emb_grnn_att
+  std::vector<float> q_bid_emb_grnn_att_grnn_fw_wh_maxs;
+  std::vector<float> q_bid_emb_grnn_att_grnn_fw_wi_maxs;
+  std::vector<float> q_bid_emb_grnn_att_grnn_rv_wh_maxs;
+  std::vector<float> q_bid_emb_grnn_att_grnn_rv_wi_maxs;
+  float q_bid_emb_grnn_att_att_fc_w_max{0.0f};
+  // pt_bid_emb_grnn_att
+  std::vector<float> pt_bid_emb_grnn_att_grnn_fw_wh_maxs;
+  std::vector<float> pt_bid_emb_grnn_att_grnn_fw_wi_maxs;
+  std::vector<float> pt_bid_emb_grnn_att_grnn_rv_wh_maxs;
+  std::vector<float> pt_bid_emb_grnn_att_grnn_rv_wi_maxs;
+  float pt_bid_emb_grnn_att_att_fc_w_max{0.0f};
+  // pa_bid_emb_att
+  float pa_bid_emb_att_att_fc_w_max{0.0f};
+  // q_pa_match_conv_topk
+  float q_pa_match_conv_topk_input_w_max{0.0f};
+  float q_pa_match_conv_topk_conv_w_max{0.0f};
+  int q_pa_match_conv_topk_dim_t{0};
+  int q_pa_match_conv_topk_output_channel{0};
+  std::vector<int> q_pa_match_conv_topk_topks;
+  int q_pa_match_conv_topk_channel_num{0};
+  // q_pt_match_conv_topk
+  float q_pt_match_conv_topk_input_w_max{0.0f};
+  float q_pt_match_conv_topk_conv_w_max{0.0f};
+  int q_pt_match_conv_topk_dim_t{0};
+  int q_pt_match_conv_topk_output_channel{0};
+  std::vector<int> q_pt_match_conv_topk_topks;
+  int q_pt_match_conv_topk_channel_num{0};
+  // q_pcq_match_conv_topk
+  float q_pcq_match_conv_topk_input_w_max{0.0f};
+  float q_pcq_match_conv_topk_conv_w_max{0.0f};
+  int q_pcq_match_conv_topk_dim_t{0};
+  int q_pcq_match_conv_topk_output_channel{0};
+  std::vector<int> q_pcq_match_conv_topk_topks;
+  int q_pcq_match_conv_topk_channel_num{0};
+  // merge_all
+  std::vector<float> merge_all_grnn_fw_wh_maxs;
+  std::vector<float> merge_all_grnn_fw_wi_maxs;
+  std::vector<float> merge_all_grnn_rv_wh_maxs;
+  std::vector<float> merge_all_grnn_rv_wi_maxs;
+  float merge_all_fc0_w_max{0.0f};
+  float merge_all_fc1_w_max{0.0f};
+  float merge_all_fc2_w_max{0.0f};
+
+  lite::Tensor* merge_all_out{};
+};
+
 // For DeformableConvolution op
 struct DeformableConvParam : ParamBase {
   lite::Tensor* x{};

@@ -125,6 +125,46 @@ class XPUMmdnnMergeAllOp : public OpLite {
   mutable XPUMmdnnMergeAllParam param_;
 };
 
+class XPUMmdnnMultiStreamV1Op : public OpLite {
+ public:
+  XPUMmdnnMultiStreamV1Op() {}
+
+  explicit XPUMmdnnMultiStreamV1Op(const std::string &op_type) : OpLite(op_type) {}
+
+  bool CheckShape() const override;
+
+  bool InferShapeImpl() const override;
+
+  bool AttachImpl(const cpp::OpDesc &opdesc, lite::Scope *scope) override;
+
+  void AttachKernel(KernelBase *kernel) override { kernel->SetParam(param_); }
+
+  std::string DebugString() const override { return "XPUMmdnnMultiStreamV1Op"; }
+
+ private:
+  mutable XPUMmdnnMultiStreamV1Param param_;
+};
+
+class XPUMmdnnMultiStreamV2Op : public OpLite {
+ public:
+  XPUMmdnnMultiStreamV2Op() {}
+
+  explicit XPUMmdnnMultiStreamV2Op(const std::string &op_type) : OpLite(op_type) {}
+
+  bool CheckShape() const override;
+
+  bool InferShapeImpl() const override;
+
+  bool AttachImpl(const cpp::OpDesc &opdesc, lite::Scope *scope) override;
+
+  void AttachKernel(KernelBase *kernel) override { kernel->SetParam(param_); }
+
+  std::string DebugString() const override { return "XPUMmdnnMultiStreamV2Op"; }
+
+ private:
+  mutable XPUMmdnnMultiStreamV2Param param_;
+};
+
 }  // namespace operators
 }  // namespace lite
 }  // namespace paddle

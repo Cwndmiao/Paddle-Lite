@@ -298,6 +298,336 @@ bool XPUMmdnnMergeAllOp::AttachImpl(const cpp::OpDesc& op_desc,
   return true;
 }
 
+lite::Tensor* GetInputTensor(const cpp::OpDesc& op_desc,
+        lite::Scope* scope,
+        std::string name) {
+    return scope->FindVar(op_desc.Input(name).front())
+            ->GetMutable<lite::Tensor>();
+}
+
+bool XPUMmdnnMultiStreamV1Op::CheckShape() const { return true; }
+
+bool XPUMmdnnMultiStreamV1Op::InferShapeImpl() const {
+    int64_t batch = param_.q_basic->lod()[0].size() - 1;
+    param_.merge_all_out->Resize({batch});
+    return true;
+}
+
+bool XPUMmdnnMultiStreamV1Op::AttachImpl(const cpp::OpDesc& op_desc,
+        lite::Scope* scope) {
+    param_.emb_tbl = GetInputTensor(op_desc, scope,
+            "emb_tbl");
+    param_.q_basic = GetInputTensor(op_desc, scope,
+            "q_basic");
+    param_.q_bigram0 = GetInputTensor(op_desc, scope,
+            "q_bigram0");
+    param_.q_bid_emb_grnn_att_grnn_fw_wh = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_grnn_fw_wh");
+    param_.q_bid_emb_grnn_att_grnn_fw_wi = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_grnn_fw_wi");
+    param_.q_bid_emb_grnn_att_grnn_rv_wh = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_grnn_rv_wh");
+    param_.q_bid_emb_grnn_att_grnn_rv_wi = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_grnn_rv_wi");
+    param_.q_bid_emb_grnn_att_att_fc_w = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_att_fc_w");
+    param_.q_bid_emb_grnn_att_att_fc_b = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_att_fc_b");
+    param_.pt_basic = GetInputTensor(op_desc, scope,
+            "pt_basic");
+    param_.pt_bigram0 = GetInputTensor(op_desc, scope,
+            "pt_bigram0");
+    param_.pt_bid_emb_grnn_att_grnn_fw_wh = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_grnn_fw_wh");
+    param_.pt_bid_emb_grnn_att_grnn_fw_wi = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_grnn_fw_wi");
+    param_.pt_bid_emb_grnn_att_grnn_rv_wh = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_grnn_rv_wh");
+    param_.pt_bid_emb_grnn_att_grnn_rv_wi = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_grnn_rv_wi");
+    param_.pt_bid_emb_grnn_att_att_fc_w = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_att_fc_w");
+    param_.pt_bid_emb_grnn_att_att_fc_b = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_att_fc_b");
+    param_.pa_basic = GetInputTensor(op_desc, scope,
+            "pa_basic");
+    param_.pa_bigram0 = GetInputTensor(op_desc, scope,
+            "pa_bigram0");
+    param_.pa_bid_emb_att_att_fc_w = GetInputTensor(op_desc, scope,
+            "pa_bid_emb_att_att_fc_w");
+    param_.pa_bid_emb_att_att_fc_b = GetInputTensor(op_desc, scope,
+            "pa_bid_emb_att_att_fc_b");
+    param_.q_pa_match_conv_topk_input_w = GetInputTensor(op_desc, scope,
+            "q_pa_match_conv_topk_input_w");
+    param_.q_pa_match_conv_topk_conv_w = GetInputTensor(op_desc, scope,
+            "q_pa_match_conv_topk_conv_w");
+    param_.q_pt_match_conv_topk_input_w = GetInputTensor(op_desc, scope,
+            "q_pt_match_conv_topk_input_w");
+    param_.q_pt_match_conv_topk_conv_w = GetInputTensor(op_desc, scope,
+            "q_pt_match_conv_topk_conv_w");
+    param_.merge_all_grnn_fw_wh = GetInputTensor(op_desc, scope,
+            "merge_all_grnn_fw_wh");
+    param_.merge_all_grnn_fw_wi = GetInputTensor(op_desc, scope,
+            "merge_all_grnn_fw_wi");
+    param_.merge_all_grnn_rv_wh = GetInputTensor(op_desc, scope,
+            "merge_all_grnn_rv_wh");
+    param_.merge_all_grnn_rv_wi = GetInputTensor(op_desc, scope,
+            "merge_all_grnn_rv_wi");
+    param_.merge_all_fc0_w = GetInputTensor(op_desc, scope,
+            "merge_all_fc0_w");
+    param_.merge_all_fc0_b = GetInputTensor(op_desc, scope,
+            "merge_all_fc0_b");
+    param_.merge_all_fc1_w = GetInputTensor(op_desc, scope,
+            "merge_all_fc1_w");
+    param_.merge_all_fc1_b = GetInputTensor(op_desc, scope,
+            "merge_all_fc1_b");
+    param_.merge_all_fc2_w = GetInputTensor(op_desc, scope,
+            "merge_all_fc2_w");
+    param_.merge_all_fc2_b = GetInputTensor(op_desc, scope,
+            "merge_all_fc2_b");
+
+    param_.q_bid_emb_grnn_att_grnn_fw_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("q_bid_emb_grnn_att_grnn_fw_wh_maxs");
+    param_.q_bid_emb_grnn_att_grnn_fw_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("q_bid_emb_grnn_att_grnn_fw_wi_maxs");
+    param_.q_bid_emb_grnn_att_grnn_rv_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("q_bid_emb_grnn_att_grnn_rv_wh_maxs");
+    param_.q_bid_emb_grnn_att_grnn_rv_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("q_bid_emb_grnn_att_grnn_rv_wi_maxs");
+    param_.q_bid_emb_grnn_att_att_fc_w_max =
+        op_desc.GetAttr<float>("q_bid_emb_grnn_att_att_fc_w_max");
+
+    param_.pt_bid_emb_grnn_att_grnn_fw_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("pt_bid_emb_grnn_att_grnn_fw_wh_maxs");
+    param_.pt_bid_emb_grnn_att_grnn_fw_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("pt_bid_emb_grnn_att_grnn_fw_wi_maxs");
+    param_.pt_bid_emb_grnn_att_grnn_rv_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("pt_bid_emb_grnn_att_grnn_rv_wh_maxs");
+    param_.pt_bid_emb_grnn_att_grnn_rv_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("pt_bid_emb_grnn_att_grnn_rv_wi_maxs");
+    param_.pt_bid_emb_grnn_att_att_fc_w_max =
+        op_desc.GetAttr<float>("pt_bid_emb_grnn_att_att_fc_w_max");
+
+    param_.pa_bid_emb_att_att_fc_w_max =
+        op_desc.GetAttr<float>("pa_bid_emb_att_att_fc_w_max");
+
+    param_.q_pa_match_conv_topk_input_w_max =
+        op_desc.GetAttr<float>("q_pa_match_conv_topk_input_w_max");
+    param_.q_pa_match_conv_topk_conv_w_max =
+        op_desc.GetAttr<float>("q_pa_match_conv_topk_conv_w_max");
+    param_.q_pa_match_conv_topk_dim_t =
+        op_desc.GetAttr<int>("q_pa_match_conv_topk_dim_t");
+    param_.q_pa_match_conv_topk_output_channel =
+        op_desc.GetAttr<int>("q_pa_match_conv_topk_output_channel");
+    param_.q_pa_match_conv_topk_topks =
+        op_desc.GetAttr<std::vector<int>>("q_pa_match_conv_topk_topks");
+    param_.q_pa_match_conv_topk_channel_num =
+        op_desc.GetAttr<int>("q_pa_match_conv_topk_channel_num");
+
+    param_.q_pt_match_conv_topk_input_w_max =
+        op_desc.GetAttr<float>("q_pt_match_conv_topk_input_w_max");
+    param_.q_pt_match_conv_topk_conv_w_max =
+        op_desc.GetAttr<float>("q_pt_match_conv_topk_conv_w_max");
+    param_.q_pt_match_conv_topk_dim_t =
+        op_desc.GetAttr<int>("q_pt_match_conv_topk_dim_t");
+    param_.q_pt_match_conv_topk_output_channel =
+        op_desc.GetAttr<int>("q_pt_match_conv_topk_output_channel");
+    param_.q_pt_match_conv_topk_topks =
+        op_desc.GetAttr<std::vector<int>>("q_pt_match_conv_topk_topks");
+    param_.q_pt_match_conv_topk_channel_num =
+        op_desc.GetAttr<int>("q_pt_match_conv_topk_channel_num");
+
+    param_.merge_all_grnn_fw_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("merge_all_grnn_fw_wh_maxs");
+    param_.merge_all_grnn_fw_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("merge_all_grnn_fw_wi_maxs");
+    param_.merge_all_grnn_rv_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("merge_all_grnn_rv_wh_maxs");
+    param_.merge_all_grnn_rv_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("merge_all_grnn_rv_wi_maxs");
+    param_.merge_all_fc0_w_max =
+        op_desc.GetAttr<float>("merge_all_fc0_w_max");
+    param_.merge_all_fc1_w_max =
+        op_desc.GetAttr<float>("merge_all_fc1_w_max");
+    param_.merge_all_fc2_w_max =
+        op_desc.GetAttr<float>("merge_all_fc2_w_max");
+
+    param_.merge_all_out = scope->FindVar(op_desc.Output("merge_all_out").front())
+                                ->GetMutable<lite::Tensor>();
+    return true;
+}
+
+bool XPUMmdnnMultiStreamV2Op::CheckShape() const { return true; }
+
+bool XPUMmdnnMultiStreamV2Op::InferShapeImpl() const {
+    int64_t batch = param_.q_basic->lod()[0].size() - 1;
+    param_.merge_all_out->Resize({batch});
+    return true;
+}
+
+bool XPUMmdnnMultiStreamV2Op::AttachImpl(const cpp::OpDesc& op_desc,
+        lite::Scope* scope) {
+    param_.emb_tbl = GetInputTensor(op_desc, scope,
+            "emb_tbl");
+    param_.q_basic = GetInputTensor(op_desc, scope,
+            "q_basic");
+    param_.q_bigram0 = GetInputTensor(op_desc, scope,
+            "q_bigram0");
+    param_.q_bid_emb_grnn_att_grnn_fw_wh = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_grnn_fw_wh");
+    param_.q_bid_emb_grnn_att_grnn_fw_wi = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_grnn_fw_wi");
+    param_.q_bid_emb_grnn_att_grnn_rv_wh = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_grnn_rv_wh");
+    param_.q_bid_emb_grnn_att_grnn_rv_wi = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_grnn_rv_wi");
+    param_.q_bid_emb_grnn_att_att_fc_w = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_att_fc_w");
+    param_.q_bid_emb_grnn_att_att_fc_b = GetInputTensor(op_desc, scope,
+            "q_bid_emb_grnn_att_att_fc_b");
+    param_.pt_basic = GetInputTensor(op_desc, scope,
+            "pt_basic");
+    param_.pt_bigram0 = GetInputTensor(op_desc, scope,
+            "pt_bigram0");
+    param_.pt_bid_emb_grnn_att_grnn_fw_wh = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_grnn_fw_wh");
+    param_.pt_bid_emb_grnn_att_grnn_fw_wi = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_grnn_fw_wi");
+    param_.pt_bid_emb_grnn_att_grnn_rv_wh = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_grnn_rv_wh");
+    param_.pt_bid_emb_grnn_att_grnn_rv_wi = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_grnn_rv_wi");
+    param_.pt_bid_emb_grnn_att_att_fc_w = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_att_fc_w");
+    param_.pt_bid_emb_grnn_att_att_fc_b = GetInputTensor(op_desc, scope,
+            "pt_bid_emb_grnn_att_att_fc_b");
+    param_.pa_basic = GetInputTensor(op_desc, scope,
+            "pa_basic");
+    param_.pa_bigram0 = GetInputTensor(op_desc, scope,
+            "pa_bigram0");
+    param_.pa_bid_emb_att_att_fc_w = GetInputTensor(op_desc, scope,
+            "pa_bid_emb_att_att_fc_w");
+    param_.pa_bid_emb_att_att_fc_b = GetInputTensor(op_desc, scope,
+            "pa_bid_emb_att_att_fc_b");
+    param_.pcq_basic = GetInputTensor(op_desc, scope,
+            "pcq_basic");
+    param_.q_pa_match_conv_topk_input_w = GetInputTensor(op_desc, scope,
+            "q_pa_match_conv_topk_input_w");
+    param_.q_pa_match_conv_topk_conv_w = GetInputTensor(op_desc, scope,
+            "q_pa_match_conv_topk_conv_w");
+    param_.q_pt_match_conv_topk_input_w = GetInputTensor(op_desc, scope,
+            "q_pt_match_conv_topk_input_w");
+    param_.q_pt_match_conv_topk_conv_w = GetInputTensor(op_desc, scope,
+            "q_pt_match_conv_topk_conv_w");
+    param_.q_pcq_match_conv_topk_input_w = GetInputTensor(op_desc, scope,
+            "q_pcq_match_conv_topk_input_w");
+    param_.q_pcq_match_conv_topk_conv_w = GetInputTensor(op_desc, scope,
+            "q_pcq_match_conv_topk_conv_w");
+    param_.merge_all_grnn_fw_wh = GetInputTensor(op_desc, scope,
+            "merge_all_grnn_fw_wh");
+    param_.merge_all_grnn_fw_wi = GetInputTensor(op_desc, scope,
+            "merge_all_grnn_fw_wi");
+    param_.merge_all_grnn_rv_wh = GetInputTensor(op_desc, scope,
+            "merge_all_grnn_rv_wh");
+    param_.merge_all_grnn_rv_wi = GetInputTensor(op_desc, scope,
+            "merge_all_grnn_rv_wi");
+    param_.merge_all_fc0_w = GetInputTensor(op_desc, scope,
+            "merge_all_fc0_w");
+    param_.merge_all_fc0_b = GetInputTensor(op_desc, scope,
+            "merge_all_fc0_b");
+    param_.merge_all_fc1_w = GetInputTensor(op_desc, scope,
+            "merge_all_fc1_w");
+    param_.merge_all_fc1_b = GetInputTensor(op_desc, scope,
+            "merge_all_fc1_b");
+    param_.merge_all_fc2_w = GetInputTensor(op_desc, scope,
+            "merge_all_fc2_w");
+    param_.merge_all_fc2_b = GetInputTensor(op_desc, scope,
+            "merge_all_fc2_b");
+
+    param_.q_bid_emb_grnn_att_grnn_fw_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("q_bid_emb_grnn_att_grnn_fw_wh_maxs");
+    param_.q_bid_emb_grnn_att_grnn_fw_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("q_bid_emb_grnn_att_grnn_fw_wi_maxs");
+    param_.q_bid_emb_grnn_att_grnn_rv_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("q_bid_emb_grnn_att_grnn_rv_wh_maxs");
+    param_.q_bid_emb_grnn_att_grnn_rv_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("q_bid_emb_grnn_att_grnn_rv_wi_maxs");
+    param_.q_bid_emb_grnn_att_att_fc_w_max =
+        op_desc.GetAttr<float>("q_bid_emb_grnn_att_att_fc_w_max");
+
+    param_.pt_bid_emb_grnn_att_grnn_fw_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("pt_bid_emb_grnn_att_grnn_fw_wh_maxs");
+    param_.pt_bid_emb_grnn_att_grnn_fw_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("pt_bid_emb_grnn_att_grnn_fw_wi_maxs");
+    param_.pt_bid_emb_grnn_att_grnn_rv_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("pt_bid_emb_grnn_att_grnn_rv_wh_maxs");
+    param_.pt_bid_emb_grnn_att_grnn_rv_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("pt_bid_emb_grnn_att_grnn_rv_wi_maxs");
+    param_.pt_bid_emb_grnn_att_att_fc_w_max =
+        op_desc.GetAttr<float>("pt_bid_emb_grnn_att_att_fc_w_max");
+
+    param_.pa_bid_emb_att_att_fc_w_max =
+        op_desc.GetAttr<float>("pa_bid_emb_att_att_fc_w_max");
+
+    param_.q_pa_match_conv_topk_input_w_max =
+        op_desc.GetAttr<float>("q_pa_match_conv_topk_input_w_max");
+    param_.q_pa_match_conv_topk_conv_w_max =
+        op_desc.GetAttr<float>("q_pa_match_conv_topk_conv_w_max");
+    param_.q_pa_match_conv_topk_dim_t =
+        op_desc.GetAttr<int>("q_pa_match_conv_topk_dim_t");
+    param_.q_pa_match_conv_topk_output_channel =
+        op_desc.GetAttr<int>("q_pa_match_conv_topk_output_channel");
+    param_.q_pa_match_conv_topk_topks =
+        op_desc.GetAttr<std::vector<int>>("q_pa_match_conv_topk_topks");
+    param_.q_pa_match_conv_topk_channel_num =
+        op_desc.GetAttr<int>("q_pa_match_conv_topk_channel_num");
+
+    param_.q_pt_match_conv_topk_input_w_max =
+        op_desc.GetAttr<float>("q_pt_match_conv_topk_input_w_max");
+    param_.q_pt_match_conv_topk_conv_w_max =
+        op_desc.GetAttr<float>("q_pt_match_conv_topk_conv_w_max");
+    param_.q_pt_match_conv_topk_dim_t =
+        op_desc.GetAttr<int>("q_pt_match_conv_topk_dim_t");
+    param_.q_pt_match_conv_topk_output_channel =
+        op_desc.GetAttr<int>("q_pt_match_conv_topk_output_channel");
+    param_.q_pt_match_conv_topk_topks =
+        op_desc.GetAttr<std::vector<int>>("q_pt_match_conv_topk_topks");
+    param_.q_pt_match_conv_topk_channel_num =
+        op_desc.GetAttr<int>("q_pt_match_conv_topk_channel_num");
+
+    param_.q_pcq_match_conv_topk_input_w_max =
+        op_desc.GetAttr<float>("q_pcq_match_conv_topk_input_w_max");
+    param_.q_pcq_match_conv_topk_conv_w_max =
+        op_desc.GetAttr<float>("q_pcq_match_conv_topk_conv_w_max");
+    param_.q_pcq_match_conv_topk_dim_t =
+        op_desc.GetAttr<int>("q_pcq_match_conv_topk_dim_t");
+    param_.q_pcq_match_conv_topk_output_channel =
+        op_desc.GetAttr<int>("q_pcq_match_conv_topk_output_channel");
+    param_.q_pcq_match_conv_topk_topks =
+        op_desc.GetAttr<std::vector<int>>("q_pcq_match_conv_topk_topks");
+    param_.q_pcq_match_conv_topk_channel_num =
+        op_desc.GetAttr<int>("q_pcq_match_conv_topk_channel_num");
+
+    param_.merge_all_grnn_fw_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("merge_all_grnn_fw_wh_maxs");
+    param_.merge_all_grnn_fw_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("merge_all_grnn_fw_wi_maxs");
+    param_.merge_all_grnn_rv_wh_maxs =
+        op_desc.GetAttr<std::vector<float>>("merge_all_grnn_rv_wh_maxs");
+    param_.merge_all_grnn_rv_wi_maxs =
+        op_desc.GetAttr<std::vector<float>>("merge_all_grnn_rv_wi_maxs");
+    param_.merge_all_fc0_w_max =
+        op_desc.GetAttr<float>("merge_all_fc0_w_max");
+    param_.merge_all_fc1_w_max =
+        op_desc.GetAttr<float>("merge_all_fc1_w_max");
+    param_.merge_all_fc2_w_max =
+        op_desc.GetAttr<float>("merge_all_fc2_w_max");
+
+    param_.merge_all_out = scope->FindVar(op_desc.Output("merge_all_out").front())
+                                ->GetMutable<lite::Tensor>();
+    return true;
+}
+
 }  // namespace operators
 }  // namespace lite
 }  // namespace paddle
@@ -312,3 +642,7 @@ REGISTER_LITE_OP(__xpu__mmdnn_match_conv_topk,
                  paddle::lite::operators::XPUMmdnnMatchConvTopkOp);
 REGISTER_LITE_OP(__xpu__mmdnn_merge_all,
                  paddle::lite::operators::XPUMmdnnMergeAllOp);
+REGISTER_LITE_OP(__xpu__mmdnn_multi_stream_v1,
+                 paddle::lite::operators::XPUMmdnnMultiStreamV1Op);
+REGISTER_LITE_OP(__xpu__mmdnn_multi_stream_v2,
+                 paddle::lite::operators::XPUMmdnnMultiStreamV2Op);
