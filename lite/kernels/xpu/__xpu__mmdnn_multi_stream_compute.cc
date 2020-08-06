@@ -1799,8 +1799,10 @@ void XPUMmdnnMultiStreamV1Compute::PrepareForRun() {
 
 void XPUMmdnnMultiStreamV1Compute::Run() {
     auto& param = this->Param<param_t>();
-    //int batch = param.q_basic->lod()[0].size() - 1;
-    //assert(batch <= UB_batch);
+    int batch = param.q_basic->lod()[0].size() - 1;
+    if (batch <= UB_batch) {
+        LOG(FATAL) << "Batch of MMDNN should not be larger than " << UB_batch << std::endl;
+    }
 
     auto& ctx = this->ctx_->As<XPUContext>();
     auto* xpu_ctx = ctx.GetRawContext();
@@ -2262,8 +2264,10 @@ void XPUMmdnnMultiStreamV2Compute::PrepareForRun() {
 
 void XPUMmdnnMultiStreamV2Compute::Run() {
     auto& param = this->Param<param_t>();
-    //int batch = param.q_basic->lod()[0].size() - 1;
-    //assert(batch <= UB_batch);
+    int batch = param.q_basic->lod()[0].size() - 1;
+    if (batch <= UB_batch) {
+        LOG(FATAL) << "Batch of MMDNN should not be larger than " << UB_batch << std::endl;
+    }
 
     auto& ctx = this->ctx_->As<XPUContext>();
     auto* xpu_ctx = ctx.GetRawContext();
