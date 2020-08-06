@@ -1800,7 +1800,7 @@ void XPUMmdnnMultiStreamV1Compute::PrepareForRun() {
 void XPUMmdnnMultiStreamV1Compute::Run() {
     auto& param = this->Param<param_t>();
     int batch = param.q_basic->lod()[0].size() - 1;
-    if (batch <= UB_batch) {
+    if (batch > UB_batch) {
         LOG(FATAL) << "Batch of MMDNN should not be larger than " << UB_batch << std::endl;
     }
 
@@ -2265,7 +2265,7 @@ void XPUMmdnnMultiStreamV2Compute::PrepareForRun() {
 void XPUMmdnnMultiStreamV2Compute::Run() {
     auto& param = this->Param<param_t>();
     int batch = param.q_basic->lod()[0].size() - 1;
-    if (batch <= UB_batch) {
+    if (batch > UB_batch) {
         LOG(FATAL) << "Batch of MMDNN should not be larger than " << UB_batch << std::endl;
     }
 
