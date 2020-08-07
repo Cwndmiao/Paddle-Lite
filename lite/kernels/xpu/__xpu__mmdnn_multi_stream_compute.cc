@@ -156,8 +156,11 @@ void grnn_layout(std::vector<int> width, std::vector<int>& new_offset, std::vect
 }
 
 class IdInfo{
-    char* xpu_buffer;
-    char* cpu_buffer;
+    char* xpu_buffer_hbm{nullptr};
+    char* xpu_buffer_l3{nullptr};
+    char* xpu_buffer{nullptr};
+    char* cpu_buffer{nullptr};
+    int buffer_size{0};
 public:
     int64_t* id0_64; // UB_batch * UB_seqlen * sizeof(int64_t)
     int64_t* id1_64; // UB_batch * UB_seqlen * sizeof(int64_t)
@@ -178,12 +181,22 @@ public:
     std::vector<int> seqlen_list;
 
     void init(int UB_batch, int UB_seqlen) {
-        int total_size = (UB_batch + 1) * sizeof(int64_t) + \
+        buffer_size = (UB_batch + 1) * sizeof(int64_t) + \
                         (UB_batch + 1) * sizeof(int) * 2 + \
                         (UB_seqlen + 1) * sizeof(int);
 
-        xpu_malloc((void**)(&xpu_buffer), total_size, XPU_MEM_L3);
-        cpu_buffer = (char*)malloc(total_size);
+        xpu_malloc((void**)(&xpu_buffer_hbm), buffer_size);
+        xpu_buffer = xpu_buffer_hbm;
+        cpu_buffer = (char*)malloc(buffer_size);
+    }
+
+    void get_xpu_buffer_l3(char* &l3_workspace, int &l3_size) {
+        if ((l3_workspace != nullptr) && (l3_size >= buffer_size)) {
+            xpu_buffer_l3 = l3_workspace;
+            xpu_buffer = xpu_buffer_l3;
+            l3_workspace += buffer_size;
+            l3_size -= buffer_size;
+        }
     }
 
     void update(lite::Tensor* id0, lite::Tensor* id1) {
@@ -1573,7 +1586,8 @@ public:
         // bi_grnn_cdnn bottom
         int workspace_need_size = bi_grnn_cdnn.total_result_size(sentense);
         float* fw_out_l3 = l3_manager.malloc_bottom(workspace_need_size);
-        float* rv_out_l3 = (float*)((char*)fw_out_l3 + bi_grnn_cdnn.bi_grnn.fw_out_size(sentense));
+        float* rv_out_l3 = (fw_out_l3 == nullptr) ? nullptr :
+            (float*)((char*)fw_out_l3 + bi_grnn_cdnn.bi_grnn.fw_out_size(sentense));
         bi_grnn_cdnn.infer(ctx, sentense,
             bi_grnn_fw_in, bi_grnn_rv_in,
             l3_manager.unused_workspace(), l3_manager.unused_size(),
@@ -1808,6 +1822,9 @@ void XPUMmdnnMultiStreamV1Compute::Run() {
     auto* xpu_ctx = ctx.GetRawContext();
     char* l3_buffer_base = (char*)(xpu_ctx->workspace_l3_ptr);
     int total_l3_size = xpu_ctx->workspace_l3_size;
+    q_id.get_xpu_buffer_l3(l3_buffer_base, total_l3_size);
+    pt_id.get_xpu_buffer_l3(l3_buffer_base, total_l3_size);
+    pa_id.get_xpu_buffer_l3(l3_buffer_base, total_l3_size);
     L3BottomTopManager l3_manager(l3_buffer_base, total_l3_size);
 
     int workspace_need_size = 0;
@@ -2273,6 +2290,10 @@ void XPUMmdnnMultiStreamV2Compute::Run() {
     auto* xpu_ctx = ctx.GetRawContext();
     char* l3_buffer_base = (char*)(xpu_ctx->workspace_l3_ptr);
     int total_l3_size = xpu_ctx->workspace_l3_size;
+    q_id.get_xpu_buffer_l3(l3_buffer_base, total_l3_size);
+    pt_id.get_xpu_buffer_l3(l3_buffer_base, total_l3_size);
+    pa_id.get_xpu_buffer_l3(l3_buffer_base, total_l3_size);
+    pcq_id.get_xpu_buffer_l3(l3_buffer_base, total_l3_size);
     L3BottomTopManager l3_manager(l3_buffer_base, total_l3_size);
 
     int workspace_need_size = 0;

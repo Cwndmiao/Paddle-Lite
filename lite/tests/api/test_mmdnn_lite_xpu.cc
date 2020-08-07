@@ -223,7 +223,7 @@ TEST(MMDNN, test_mmdnn_lite_xpu) {
          lite_api::Place{TARGET(kX86), PRECISION(kInt64)},
          lite_api::Place{TARGET(kHost), PRECISION(kFloat)}});
   }
-  config.set_xpu_workspace_l3_size_per_thread(14 * 1024 * 1024);
+  config.set_xpu_workspace_l3_size_per_thread();
   auto predictor = lite_api::CreatePaddlePredictor(config);
 
   if (FLAGS_perf) {
